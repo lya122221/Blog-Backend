@@ -4,16 +4,17 @@ import (
 	"blog/internal/models"
 )
 
-func (s *Storage) GetStoredPassword(email string) (string, error) {
+func (s *Storage) GetUserData(email string) (string, string, error) {
 	var hashedPassword string
+	var userID string
 
 	err := s.db.QueryRow(`
-	SELECT password_hash
+	SELECT id, password_hash
 	FROM users
 	WHERE email = $1
-	`, email).Scan(&hashedPassword)
+	`, email).Scan(&userID, &hashedPassword)
 
-	return hashedPassword, err
+	return userID, hashedPassword, err
 }
 
 func (s *Storage) AddNewUser(user models.User) error {

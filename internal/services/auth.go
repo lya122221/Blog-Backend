@@ -9,7 +9,7 @@ import (
 )
 
 type UserRepository interface {
-	GetStoredPassword(email string) (string, error)
+	GetUserData(email string) (string, string, error)
 	AddNewUser(user models.User) error
 }
 
@@ -37,7 +37,7 @@ func (s *UserService) Register(user *models.UserRegister) error {
 }
 
 func (s *UserService) Login(user *models.UserLogin) (string, error) {
-	hashedPassword, err := s.repo.GetStoredPassword(user.Email)
+	userID, hashedPassword, err := s.repo.GetUserData(user.Email)
 	if err != nil {
 		return "", err
 	}
@@ -47,7 +47,7 @@ func (s *UserService) Login(user *models.UserLogin) (string, error) {
 		return "", errors.New("Incorrect password")
 	}
 
-	token, err := pkg.GenerateToken(user.Email)
+	token, err := pkg.GenerateToken(userID)
 	if err != nil {
 		return "", err
 	}
