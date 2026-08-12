@@ -69,11 +69,11 @@ func (s *Storage) GetArticles(limit int, offset int, tags []string) ([]models.Ar
 	} else {
 		rows, err = s.GetArticlesWithTags(limit, offset, tags)
 	}
-	defer rows.Close()
 
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 
 	var articles []models.Article
 
@@ -104,4 +104,41 @@ func (s *Storage) GetArticles(limit int, offset int, tags []string) ([]models.Ar
 	}
 
 	return articles, nil
+}
+
+func (s *Storage) CreateArticle(authorID, title, content string, tags []string) error {
+	var articleID string
+	err := s.db.QueryRow(`
+		INSERT INTO articles (author_id, title, content)
+		VALUES ($1, $2, $3)
+		RETURNING id
+	`, authorID, title, content).Scan(&articleID)
+
+	if err != nil {
+		return err
+	}
+
+	for _, tag := range tags {
+		var tagID string
+		err := s.db.QueryRow(`
+			INSERT INTO tags (name)
+			VALUES ($1)
+			RETURNING id
+		`, tag).Scan(&tagID)
+
+		if err != nil {
+			return err
+		}
+
+		_, err = s.db.Exec(`
+			INSERT INTO article_tags (article_id, tag_id)
+			VALUES ($1, $2)
+		`, articleID, tagID)
+
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

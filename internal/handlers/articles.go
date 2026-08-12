@@ -10,6 +10,7 @@ import (
 
 type ArticlesService interface {
 	GetArticles(page int, limit int, tags []string) ([]models.Article, error)
+	CreateArticle(article models.Article) error
 }
 
 type ArticlesHandler struct {
@@ -40,4 +41,26 @@ func (h *ArticlesHandler) GetArticlesHandler(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, articles)
+}
+
+func (h *ArticlesHandler) CreateArticlesHandler(c *gin.Context) {
+	var article models.Article
+	if err := c.ShouldBindJSON(&article); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+
+	userID, exist := c.Get("userID")
+	if !exist {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Author ID is missing"})
+		return
+	}
+	author_id := userID.(string)
+	article.Author.ID = author_id
+
+	if err := h.service.CreateArticle(article); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create article"})
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"message": "Article created"})
 }

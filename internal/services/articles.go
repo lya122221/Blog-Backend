@@ -4,6 +4,7 @@ import "blog/internal/models"
 
 type ArticlesRepository interface {
 	GetArticles(limit int, offset int, tags []string) ([]models.Article, error)
+	CreateArticle(authorID, title, content string, tags []string) error
 }
 
 type ArticlesService struct {
@@ -23,4 +24,8 @@ func (s *ArticlesService) GetArticles(page int, limit int, tags []string) ([]mod
 	}
 
 	return articles, nil
+}
+
+func (s *ArticlesService) CreateArticle(article models.Article) error {
+	return s.repo.CreateArticle(article.Author.ID, article.Title, article.Content, article.Tags)
 }

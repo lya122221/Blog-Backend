@@ -2,6 +2,7 @@ package main
 
 import (
 	"blog/internal/handlers"
+	"blog/internal/middleware"
 	"blog/internal/repositories"
 	"blog/internal/services"
 	"fmt"
@@ -31,13 +32,21 @@ func main() {
 		userService := services.NewUserService(storage)
 		userHandler := handlers.NewUserHandler(userService)
 
-		v1.POST("/auth/register", userHandler.RegisterUser)
-		v1.POST("/auth/login", userHandler.LoginUser)
+		auth := v1.Group("/auth")
+		{
+			auth.POST("/register", userHandler.RegisterUser)
+			auth.POST("/login", userHandler.LoginUser)
+		}
 
 		articlesService := services.NewArticlesService(storage)
 		articlesHandler := handlers.NewArticlesHandler(articlesService)
 
-		v1.GET("/articles", articlesHandler.GetArticlesHandler)
+		articles := v1.Group("/articles")
+		articles.Use(middleware.AuthMiddleware())
+		{
+			articles.GET("/", articlesHandler.GetArticlesHandler)
+			articles.POST("/", articlesHandler.CreateArticlesHandler)
+		}
 	}
 
 	if err := r.Run(":8080"); err != nil {
