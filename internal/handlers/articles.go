@@ -11,6 +11,7 @@ import (
 type ArticlesService interface {
 	GetArticles(page int, limit int, tags []string) ([]models.Article, error)
 	CreateArticle(article models.Article) error
+	GetArticleWithID(idString string) (*models.Article, error)
 }
 
 type ArticlesHandler struct {
@@ -55,12 +56,28 @@ func (h *ArticlesHandler) CreateArticlesHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Author ID is missing"})
 		return
 	}
-	author_id := userID.(string)
-	article.Author.ID = author_id
+	authorID, ok := userID.(string)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID type"})
+		return
+	}
+	article.Author.ID = authorID
 
 	if err := h.service.CreateArticle(article); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create article"})
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"message": "Article created"})
+}
+
+func (h *ArticlesHandler) GetArticleWithIDHandler(c *gin.Context) {
+	articleID := c.Param("id")
+
+	article, err := h.service.GetArticleWithID(articleID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get article"})
+		return
+	}
+
+	c.JSON(http.StatusOK, article)
 }

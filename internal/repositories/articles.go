@@ -3,6 +3,9 @@ package repositories
 import (
 	"blog/internal/models"
 	"database/sql"
+
+	"github.com/google/uuid"
+	"github.com/lib/pq"
 )
 
 func (s *Storage) GetArticlesWithoutTags(limit int, offset int) (*sql.Rows, error) {
@@ -15,12 +18,13 @@ func (s *Storage) GetArticlesWithoutTags(limit int, offset int) (*sql.Rows, erro
 			articles.created_at,
 			users.id AS author_id,
 			users.username AS author_username,
-			(
-				SELECT array_agg(tags.name)
-				FROM article_tags at
-				INNER JOIN tags ON tags.id = at.tag_id
-				WHERE at.article_id = articles.id
-			) AS all_tags
+			COALESCE((
+        SELECT array_agg(tags.name)
+        FROM article_tags at
+        INNER JOIN tags 
+          ON tags.id = at.tag_id
+        WHERE at.article_id = articles.id
+    	), '{}') AS all_tags
 		FROM articles
 		INNER JOIN users 
 			ON articles.author_id = users.id 
@@ -39,13 +43,13 @@ func (s *Storage) GetArticlesWithTags(limit int, offset int, tags []string) (*sq
 			articles.created_at,
 			users.id AS author_id,
 			users.username AS author_username,
-			(
-				SELECT array_agg(tags.name)
-				FROM article_tags at
-				INNER JOIN tags 
-					ON tags.id = at.tag_id
-				WHERE at.article_id = articles.id
-			) AS all_tags
+			COALESCE((
+        SELECT array_agg(tags.name)
+        FROM article_tags at
+        INNER JOIN tags 
+          ON tags.id = at.tag_id
+        WHERE at.article_id = articles.id
+    	), '{}') AS all_tags
 		FROM articles
 		INNER JOIN users
 			ON articles.author_id = users.id 
@@ -88,7 +92,7 @@ func (s *Storage) GetArticles(limit int, offset int, tags []string) ([]models.Ar
 			&a.CreatedAt,
 			&a.Author.ID,
 			&a.Author.Username,
-			&a.Tags,
+			pq.Array(&a.Tags),
 		)
 
 		if err != nil {
@@ -107,8 +111,16 @@ func (s *Storage) GetArticles(limit int, offset int, tags []string) ([]models.Ar
 }
 
 func (s *Storage) CreateArticle(authorID, title, content string, tags []string) error {
+	tx, err := s.db.Begin()
+
+	if err != nil {
+		return err
+	}
+
+	defer tx.Rollback()
+
 	var articleID string
-	err := s.db.QueryRow(`
+	err = tx.QueryRow(`
 		INSERT INTO articles (author_id, title, content)
 		VALUES ($1, $2, $3)
 		RETURNING id
@@ -120,9 +132,10 @@ func (s *Storage) CreateArticle(authorID, title, content string, tags []string) 
 
 	for _, tag := range tags {
 		var tagID string
-		err := s.db.QueryRow(`
+		err := tx.QueryRow(`
 			INSERT INTO tags (name)
 			VALUES ($1)
+			ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name 
 			RETURNING id
 		`, tag).Scan(&tagID)
 
@@ -130,7 +143,7 @@ func (s *Storage) CreateArticle(authorID, title, content string, tags []string) 
 			return err
 		}
 
-		_, err = s.db.Exec(`
+		_, err = tx.Exec(`
 			INSERT INTO article_tags (article_id, tag_id)
 			VALUES ($1, $2)
 		`, articleID, tagID)
@@ -140,5 +153,51 @@ func (s *Storage) CreateArticle(authorID, title, content string, tags []string) 
 		}
 	}
 
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+func (s *Storage) GetArticleWithID(articleID uuid.UUID) (*models.Article, error) {
+	var article models.Article
+
+	err := s.db.QueryRow(`
+		UPDATE articles SET views_count = views_count + 1
+			WHERE id = $1
+			RETURNING 
+				id,
+				title,
+				content,
+				views_count,
+				created_at,
+				(SELECT username 
+					FROM users 
+					WHERE id = articles.author_id
+				),
+				articles.author_id,
+				COALESCE((
+					SELECT array_agg(t.name)
+					FROM article_tags at
+					INNER JOIN tags t 
+						ON t.id = at.tag_id
+					WHERE at.article_id = articles.id
+				), '{}')
+	`, articleID).Scan(
+		&article.ID,
+		&article.Title,
+		&article.Content,
+		&article.ViewsCount,
+		&article.CreatedAt,
+		&article.Author.Username,
+		&article.Author.ID,
+		pq.Array(&article.Tags),
+	)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &article, nil
 }

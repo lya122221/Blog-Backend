@@ -1,10 +1,15 @@
 package services
 
-import "blog/internal/models"
+import (
+	"blog/internal/models"
+
+	"github.com/google/uuid"
+)
 
 type ArticlesRepository interface {
 	GetArticles(limit int, offset int, tags []string) ([]models.Article, error)
 	CreateArticle(authorID, title, content string, tags []string) error
+	GetArticleWithID(articleID uuid.UUID) (*models.Article, error)
 }
 
 type ArticlesService struct {
@@ -28,4 +33,18 @@ func (s *ArticlesService) GetArticles(page int, limit int, tags []string) ([]mod
 
 func (s *ArticlesService) CreateArticle(article models.Article) error {
 	return s.repo.CreateArticle(article.Author.ID, article.Title, article.Content, article.Tags)
+}
+
+func (s *ArticlesService) GetArticleWithID(idString string) (*models.Article, error) {
+	articleID, err := uuid.Parse(idString)
+	if err != nil {
+		return nil, err
+	}
+
+	article, err := s.repo.GetArticleWithID(articleID)
+	if err != nil {
+		return nil, err
+	}
+
+	return article, err
 }
