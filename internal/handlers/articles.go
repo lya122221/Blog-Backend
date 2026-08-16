@@ -12,6 +12,7 @@ type ArticlesService interface {
 	GetArticles(page int, limit int, tags []string) ([]models.Article, error)
 	CreateArticle(article models.Article) error
 	GetArticleWithID(idString string) (*models.Article, error)
+	UpdateArticle(userID string, idString string, request models.UpdateArticleRequest) error
 }
 
 type ArticlesHandler struct {
@@ -80,4 +81,33 @@ func (h *ArticlesHandler) GetArticleWithIDHandler(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, article)
+}
+
+func (h *ArticlesHandler) UpdateArticleHandler(c *gin.Context) {
+	var request models.UpdateArticleRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+
+	articleID := c.Param("id")
+
+	userID, exist := c.Get("userID")
+	if !exist {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Author ID is missing"})
+		return
+	}
+	authorID, ok := userID.(string)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID type"})
+		return
+	}
+
+	err := h.service.UpdateArticle(authorID, articleID, request)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Article updated"})
 }

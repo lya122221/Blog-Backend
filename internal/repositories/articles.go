@@ -3,6 +3,7 @@ package repositories
 import (
 	"blog/internal/models"
 	"database/sql"
+	"errors"
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
@@ -200,4 +201,73 @@ func (s *Storage) GetArticleWithID(articleID uuid.UUID) (*models.Article, error)
 	}
 
 	return &article, nil
+}
+
+func (s *Storage) UpdateArticle(authorID string, articleID uuid.UUID, request models.UpdateArticleRequest) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var storedAuthorID string
+	err = tx.QueryRow(`
+		SELECT author_id
+		FROM articles
+		WHERE id = $1
+	`, articleID).Scan(&storedAuthorID)
+	if err != nil {
+		return err
+	}
+	if storedAuthorID != authorID {
+		return errors.New("Invalid authorID")
+	}
+
+	_, err = tx.Exec(`
+		UPDATE articles
+		SET title = $1, content = $2
+		WHERE id = $3
+	`, request.Title, request.Content, articleID)
+
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.Exec(`
+		DELETE FROM article_tags
+		WHERE article_id = $1
+	`, articleID)
+
+	if err != nil {
+		return err
+	}
+
+	for _, tag := range request.Tags {
+		var tagID string
+
+		err := tx.QueryRow(`
+			INSERT INTO tags (name)
+			VALUES ($1)
+			ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+			RETURNING id
+		`, tag).Scan(&tagID)
+		if err != nil {
+			return err
+		}
+
+		_, err = tx.Exec(`
+			INSERT INTO article_tags (article_id, tag_id) 
+			VALUES ($1, $2)
+		`, articleID, tagID)
+
+		if err != nil {
+			return err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	return nil
 }

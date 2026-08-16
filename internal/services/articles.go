@@ -10,6 +10,7 @@ type ArticlesRepository interface {
 	GetArticles(limit int, offset int, tags []string) ([]models.Article, error)
 	CreateArticle(authorID, title, content string, tags []string) error
 	GetArticleWithID(articleID uuid.UUID) (*models.Article, error)
+	UpdateArticle(authorID string, articleID uuid.UUID, request models.UpdateArticleRequest) error
 }
 
 type ArticlesService struct {
@@ -47,4 +48,18 @@ func (s *ArticlesService) GetArticleWithID(idString string) (*models.Article, er
 	}
 
 	return article, err
+}
+
+func (s *ArticlesService) UpdateArticle(authorID string, articleIDStr string, request models.UpdateArticleRequest) error {
+	articleID, err := uuid.Parse(articleIDStr)
+	if err != nil {
+		return err
+	}
+
+	err = s.repo.UpdateArticle(authorID, articleID, request)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
