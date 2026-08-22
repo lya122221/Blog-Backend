@@ -13,6 +13,7 @@ type ArticlesService interface {
 	CreateArticle(article models.Article) error
 	GetArticleWithID(idString string) (*models.Article, error)
 	UpdateArticle(userID string, idString string, request models.UpdateArticleRequest) error
+	DeleteArticle(authorID string, articleID string) error
 }
 
 type ArticlesHandler struct {
@@ -110,4 +111,28 @@ func (h *ArticlesHandler) UpdateArticleHandler(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Article updated"})
+}
+
+func (h *ArticlesHandler) DeleteArticleHandler(c *gin.Context) {
+	articleID := c.Param("id")
+
+	userID, exist := c.Get("userID")
+	if !exist {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Author ID is missing"})
+		return
+	}
+
+	authorID, ok := userID.(string)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID type"})
+		return
+	}
+
+	err := h.service.DeleteArticle(authorID, articleID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Article deleted"})
 }

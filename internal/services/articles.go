@@ -11,6 +11,7 @@ type ArticlesRepository interface {
 	CreateArticle(authorID, title, content string, tags []string) error
 	GetArticleWithID(articleID uuid.UUID) (*models.Article, error)
 	UpdateArticle(authorID string, articleID uuid.UUID, request models.UpdateArticleRequest) error
+	DeleteArticle(authorID string, articleID uuid.UUID) error
 }
 
 type ArticlesService struct {
@@ -57,6 +58,20 @@ func (s *ArticlesService) UpdateArticle(authorID string, articleIDStr string, re
 	}
 
 	err = s.repo.UpdateArticle(authorID, articleID, request)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s *ArticlesService) DeleteArticle(authorID string, articleIDStr string) error {
+	articleID, err := uuid.Parse(articleIDStr)
+	if err != nil {
+		return err
+	}
+
+	err = s.repo.DeleteArticle(authorID, articleID)
 	if err != nil {
 		return err
 	}

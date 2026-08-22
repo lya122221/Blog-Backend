@@ -10,9 +10,11 @@ import (
 	"os"
 
 	"github.com/gin-gonic/gin"
+	"github.com/joho/godotenv"
 )
 
 func main() {
+	godotenv.Load()
 	dsn := fmt.Sprintf("postgres://%s:%s@localhost:5432/%s?sslmode=disable",
 		os.Getenv("POSTGRES_USER"),
 		os.Getenv("POSTGRES_PASSWORD"),
@@ -42,10 +44,16 @@ func main() {
 		articlesHandler := handlers.NewArticlesHandler(articlesService)
 
 		articles := v1.Group("/articles")
-		articles.Use(middleware.AuthMiddleware())
 		{
+			// public
 			articles.GET("/", articlesHandler.GetArticlesHandler)
+			articles.GET("/:id", articlesHandler.GetArticleWithIDHandler)
+
+			// private
+			articles.Use(middleware.AuthMiddleware())
 			articles.POST("/", articlesHandler.CreateArticlesHandler)
+			articles.PUT("/:id", articlesHandler.UpdateArticleHandler)
+			articles.DELETE("/:id", articlesHandler.DeleteArticleHandler)
 		}
 	}
 

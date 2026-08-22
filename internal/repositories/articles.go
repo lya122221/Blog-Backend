@@ -271,3 +271,41 @@ func (s *Storage) UpdateArticle(authorID string, articleID uuid.UUID, request mo
 
 	return nil
 }
+
+func (s *Storage) DeleteArticle(authorID string, articleID uuid.UUID) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var storedAuthorID string
+	err = tx.QueryRow(`
+		SELECT author_id
+		FROM articles
+		WHERE id = $1
+	`, articleID).Scan(&storedAuthorID)
+
+	if err != nil {
+		return err
+	}
+
+	if storedAuthorID != authorID {
+		return errors.New("Invalid authorID")
+	}
+
+	_, err = tx.Exec(`
+		DELETE FROM articles
+		WHERE id = $1
+	`, articleID)
+
+	if err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	return nil
+}
