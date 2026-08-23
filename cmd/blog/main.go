@@ -43,17 +43,23 @@ func main() {
 		articlesService := services.NewArticlesService(storage)
 		articlesHandler := handlers.NewArticlesHandler(articlesService)
 
+		interactionsService := services.NewInteractionsService(storage)
+		interactionsHandler := handlers.NewInteractionsHandler(interactionsService)
+
 		articles := v1.Group("/articles")
 		{
 			// public
 			articles.GET("/", articlesHandler.GetArticlesHandler)
 			articles.GET("/:id", articlesHandler.GetArticleWithIDHandler)
+			articles.GET("/:id/comments", interactionsHandler.GetCommentsHandler)
 
 			// private
 			articles.Use(middleware.AuthMiddleware())
 			articles.POST("/", articlesHandler.CreateArticlesHandler)
 			articles.PUT("/:id", articlesHandler.UpdateArticleHandler)
 			articles.DELETE("/:id", articlesHandler.DeleteArticleHandler)
+			articles.POST("/:id/comments", interactionsHandler.CreateCommentHandler)
+			articles.POST("/:id/like", interactionsHandler.ToggleLikeHandler)
 		}
 	}
 
