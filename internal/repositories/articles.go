@@ -2,11 +2,16 @@ package repositories
 
 import (
 	"blog/internal/models"
+	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
+	"github.com/redis/go-redis/v9"
 )
 
 func (s *Storage) GetArticlesWithoutTags(limit int, offset int) (*sql.Rows, error) {
@@ -165,26 +170,26 @@ func (s *Storage) GetArticleWithID(articleID uuid.UUID) (*models.Article, error)
 	var article models.Article
 
 	err := s.db.QueryRow(`
-		UPDATE articles SET views_count = views_count + 1
-			WHERE id = $1
-			RETURNING 
-				id,
-				title,
-				content,
-				views_count,
-				created_at,
-				(SELECT username 
-					FROM users 
-					WHERE id = articles.author_id
-				),
-				articles.author_id,
-				COALESCE((
-					SELECT array_agg(t.name)
-					FROM article_tags at
-					INNER JOIN tags t 
-						ON t.id = at.tag_id
-					WHERE at.article_id = articles.id
-				), '{}')
+		SELECT 
+			id,
+			title,
+			content,
+			views_count,
+			created_at,
+			(SELECT username 
+				FROM users 
+				WHERE id = articles.author_id
+			),
+			articles.author_id,
+			COALESCE((
+				SELECT array_agg(t.name)
+				FROM article_tags at
+				INNER JOIN tags t 
+					ON t.id = at.tag_id
+				WHERE at.article_id = articles.id
+			), '{}')
+		FROM articles
+		WHERE id = $1
 	`, articleID).Scan(
 		&article.ID,
 		&article.Title,
@@ -201,6 +206,73 @@ func (s *Storage) GetArticleWithID(articleID uuid.UUID) (*models.Article, error)
 	}
 
 	return &article, nil
+}
+
+func (s *Storage) IncrementViewsCount(articleID uuid.UUID) error {
+	key := fmt.Sprintf("article:%s:views", articleID)
+
+	return s.redis.Incr(context.Background(), key).Err()
+}
+
+func (s *Storage) GetAndClearViewsCount() (map[string]int, error) {
+	ctx := context.Background()
+	viewsToUpdate := make(map[string]int)
+
+	var cursor uint64
+	pattern := "article:*:views"
+
+	for {
+		var keys []string
+		var err error
+
+		keys, cursor, err = s.redis.Scan(ctx, cursor, pattern, 50).Result()
+		if err != nil {
+			return nil, err
+		}
+
+		for _, key := range keys {
+			val, err := s.redis.GetDel(ctx, key).Result()
+			if err != nil {
+				if err == redis.Nil {
+					continue
+				}
+
+				continue
+			}
+
+			viewsCount, err := strconv.Atoi(val)
+			if err != nil || viewsCount <= 0 {
+				continue
+			}
+
+			parts := strings.Split(key, ":")
+			if len(parts) == 3 {
+				articleID := parts[1]
+
+				viewsToUpdate[articleID] += viewsCount
+			}
+		}
+
+		if cursor == 0 {
+			break
+		}
+	}
+
+	return viewsToUpdate, nil
+}
+
+func (s *Storage) UpdateArticleViews(viewsCount int, articleID uuid.UUID) error {
+	_, err := s.db.Exec(`
+		UPDATE articles
+		SET views_count = views_count + $1
+		WHERE id = $2
+	`, viewsCount, articleID)
+
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (s *Storage) UpdateArticle(authorID string, articleID uuid.UUID, request models.UpdateArticleRequest) error {

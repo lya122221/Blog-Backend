@@ -5,6 +5,8 @@ import (
 	"blog/internal/middleware"
 	"blog/internal/repositories"
 	"blog/internal/services"
+	"blog/internal/workers"
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -15,13 +17,15 @@ import (
 
 func main() {
 	godotenv.Load()
-	dsn := fmt.Sprintf("postgres://%s:%s@localhost:5432/%s?sslmode=disable",
+	pgDSN := fmt.Sprintf("postgres://%s:%s@localhost:5432/%s?sslmode=disable",
 		os.Getenv("POSTGRES_USER"),
 		os.Getenv("POSTGRES_PASSWORD"),
 		os.Getenv("POSTGRES_DB"),
 	)
 
-	storage, err := repositories.NewStorage(dsn)
+	redisDSN := "localhost:6379"
+
+	storage, err := repositories.NewStorage(pgDSN, redisDSN)
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
@@ -62,6 +66,11 @@ func main() {
 			articles.POST("/:id/like", interactionsHandler.ToggleLikeHandler)
 		}
 	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go workers.StartViewsUpdaterWorker(ctx, storage)
 
 	if err := r.Run(":8080"); err != nil {
 		log.Fatalf("Failed to start server: %v", err)

@@ -12,6 +12,7 @@ type ArticlesRepository interface {
 	GetArticleWithID(articleID uuid.UUID) (*models.Article, error)
 	UpdateArticle(authorID string, articleID uuid.UUID, request models.UpdateArticleRequest) error
 	DeleteArticle(authorID string, articleID uuid.UUID) error
+	IncrementViewsCount(articleID uuid.UUID) error
 }
 
 type ArticlesService struct {
@@ -47,6 +48,10 @@ func (s *ArticlesService) GetArticleWithID(idString string) (*models.Article, er
 	if err != nil {
 		return nil, err
 	}
+
+	go func() {
+		s.repo.IncrementViewsCount(articleID)
+	}()
 
 	return article, err
 }
