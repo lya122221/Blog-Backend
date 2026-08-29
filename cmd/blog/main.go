@@ -17,13 +17,24 @@ import (
 
 func main() {
 	godotenv.Load()
-	pgDSN := fmt.Sprintf("postgres://%s:%s@localhost:5432/%s?sslmode=disable",
+
+	pgHost := os.Getenv("POSTGRES_HOST")
+	if pgHost == "" {
+		pgHost = "localhost"
+	}
+
+	pgDSN := fmt.Sprintf("postgres://%s:%s@%s:5432/%s?sslmode=disable",
 		os.Getenv("POSTGRES_USER"),
 		os.Getenv("POSTGRES_PASSWORD"),
+		pgHost,
 		os.Getenv("POSTGRES_DB"),
 	)
 
-	redisDSN := "localhost:6379"
+	redisDSN := os.Getenv("REDIS_HOST")
+	if redisDSN == "" {
+		redisDSN = "localhost"
+	}
+	redisDSN = redisDSN + ":6379"
 
 	storage, err := repositories.NewStorage(pgDSN, redisDSN)
 	if err != nil {
