@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Check formatting
+        shell: bash
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [[ -n "$unformatted" ]]; then
+            echo "The following files are not formatted:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Run static analysis
+        run: go vet ./...
+
+      - name: Run tests with race detector
+        run: go test -race ./...
+
+      - name: Check test coverage
+        shell: bash
+        run: |
+          go test ./... -covermode=atomic -coverprofile=coverage.out
+          coverage="$(go tool cover -func=coverage.out | awk '/^total:/ {gsub("%", "", $3); print $3}')"
+          minimum="70"
+          echo "Total coverage: ${coverage}%"
+          echo "### Test coverage: ${coverage}%" >> "$GITHUB_STEP_SUMMARY"
+          awk -v coverage="$coverage" -v minimum="$minimum" 'BEGIN {
+            if (coverage + 0 < minimum + 0) {
+              printf "Coverage %.1f%% is below the required %.1f%%\n", coverage, minimum
+              exit 1
+            }
+          }'
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v5
+        with:
+          name: coverage-report
+          path: coverage.out
+          retention-days: 14
+
+      - name: Build application
+        run: go build -trimpath -o /tmp/blog-api ./cmd/blog
+
+      - name: Build Docker image
+        run: docker build --tag blog-backend:ci .
