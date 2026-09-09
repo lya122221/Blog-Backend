@@ -69,7 +69,9 @@ func (s *Storage) ToggleLike(articleID uuid.UUID, userID string) (bool, int, err
 	if err != nil {
 		return false, 0, err
 	}
-	defer tx.Rollback()
+	defer func() {
+		_ = tx.Rollback()
+	}()
 
 	result, err := tx.Exec(`
 		DELETE FROM likes

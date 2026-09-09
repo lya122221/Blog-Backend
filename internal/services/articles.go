@@ -24,7 +24,7 @@ func NewArticlesService(repo ArticlesRepository) *ArticlesService {
 }
 
 func (s *ArticlesService) GetArticles(page int, limit int, tags []string) ([]models.Article, error) {
-	var offset int = (page - 1) * limit
+	offset := (page - 1) * limit
 
 	articles, err := s.repo.GetArticles(limit, offset, tags)
 	if err != nil {
@@ -50,7 +50,7 @@ func (s *ArticlesService) GetArticleWithID(idString string) (*models.Article, er
 	}
 
 	go func() {
-		s.repo.IncrementViewsCount(articleID)
+		_ = s.repo.IncrementViewsCount(articleID)
 	}()
 
 	return article, err

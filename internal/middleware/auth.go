@@ -31,7 +31,7 @@ func AuthMiddleware() gin.HandlerFunc {
 		token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (any, error) {
 			var jwtKey = []byte(os.Getenv("JWTKEY"))
 			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, fmt.Errorf("Unexpected signing method: %v", token.Header["alg"])
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 			}
 			return jwtKey, nil
 		})

@@ -44,7 +44,7 @@ func (s *UserService) Login(user *models.UserLogin) (string, error) {
 
 	correctPassword := ComparePasswords(hashedPassword, user.Password)
 	if !correctPassword {
-		return "", errors.New("Incorrect password")
+		return "", errors.New("incorrect password")
 	}
 
 	token, err := pkg.GenerateToken(userID)
@@ -69,9 +69,5 @@ func GenerateHashedPassword(password string) (string, error) {
 
 func ComparePasswords(hashedPassword string, password string) bool {
 	err := bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(password))
-	if err != nil {
-		return false
-	}
-
-	return true
+	return err == nil
 }

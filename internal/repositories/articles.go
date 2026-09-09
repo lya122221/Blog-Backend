@@ -123,7 +123,9 @@ func (s *Storage) CreateArticle(authorID, title, content string, tags []string) 
 		return err
 	}
 
-	defer tx.Rollback()
+	defer func() {
+		_ = tx.Rollback()
+	}()
 
 	var articleID string
 	err = tx.QueryRow(`
@@ -233,7 +235,7 @@ func (s *Storage) GetAndClearViewsCount() (map[string]int, error) {
 		for _, key := range keys {
 			val, err := s.redis.GetDel(ctx, key).Result()
 			if err != nil {
-				if err == redis.Nil {
+				if errors.Is(err, redis.Nil) {
 					continue
 				}
 
@@ -280,7 +282,9 @@ func (s *Storage) UpdateArticle(authorID string, articleID uuid.UUID, request mo
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() {
+		_ = tx.Rollback()
+	}()
 
 	var storedAuthorID string
 	err = tx.QueryRow(`
@@ -292,7 +296,7 @@ func (s *Storage) UpdateArticle(authorID string, articleID uuid.UUID, request mo
 		return err
 	}
 	if storedAuthorID != authorID {
-		return errors.New("Invalid authorID")
+		return errors.New("invalid authorID")
 	}
 
 	_, err = tx.Exec(`
@@ -349,7 +353,9 @@ func (s *Storage) DeleteArticle(authorID string, articleID uuid.UUID) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() {
+		_ = tx.Rollback()
+	}()
 
 	var storedAuthorID string
 	err = tx.QueryRow(`
@@ -363,7 +369,7 @@ func (s *Storage) DeleteArticle(authorID string, articleID uuid.UUID) error {
 	}
 
 	if storedAuthorID != authorID {
-		return errors.New("Invalid authorID")
+		return errors.New("invalid authorID")
 	}
 
 	_, err = tx.Exec(`

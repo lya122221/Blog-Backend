@@ -27,7 +27,7 @@ func TestGenerateToken(t *testing.T) {
 	if claims.UserID != "user-42" {
 		t.Fatalf("user_id=%q", claims.UserID)
 	}
-	if claims.ExpiresAt == nil || claims.ExpiresAt.Time.Before(before) || claims.ExpiresAt.Time.After(time.Now().Add(24*time.Hour+time.Minute)) {
+	if claims.ExpiresAt == nil || claims.ExpiresAt.Before(before) || claims.ExpiresAt.After(time.Now().Add(24*time.Hour+time.Minute)) {
 		t.Fatalf("expiration=%v", claims.ExpiresAt)
 	}
 }

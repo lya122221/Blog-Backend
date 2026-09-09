@@ -16,7 +16,7 @@ import (
 )
 
 func main() {
-	godotenv.Load()
+	_ = godotenv.Load()
 
 	pgHost := os.Getenv("POSTGRES_HOST")
 	if pgHost == "" {
@@ -81,7 +81,11 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go workers.StartViewsUpdaterWorker(ctx, storage)
+	go func() {
+		if err := workers.StartViewsUpdaterWorker(ctx, storage); err != nil {
+			log.Printf("views updater stopped: %v", err)
+		}
+	}()
 
 	if err := r.Run(":8080"); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
