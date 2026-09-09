@@ -2,6 +2,7 @@ package main
 
 import (
 	"blog/internal/handlers"
+	applog "blog/internal/logger"
 	"blog/internal/middleware"
 	"blog/internal/repositories"
 	"blog/internal/services"
@@ -9,7 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -22,13 +23,22 @@ import (
 
 func main() {
 	if err := run(); err != nil {
-		log.Printf("application stopped with an error: %v", err)
+		slog.Error("application stopped with an error", "error", err)
 		os.Exit(1)
 	}
 }
 
 func run() (runErr error) {
 	_ = godotenv.Load()
+
+	logger, err := applog.New(os.Stdout, applog.Config{
+		Level:  os.Getenv("LOG_LEVEL"),
+		Format: os.Getenv("LOG_FORMAT"),
+	})
+	if err != nil {
+		return fmt.Errorf("configure logger: %w", err)
+	}
+	slog.SetDefault(logger)
 
 	pgHost := os.Getenv("POSTGRES_HOST")
 	if pgHost == "" {
@@ -54,9 +64,13 @@ func run() (runErr error) {
 	}
 	defer func() {
 		runErr = errors.Join(runErr, storage.Close())
+		if runErr == nil {
+			logger.Info("application stopped")
+		}
 	}()
 
-	r := gin.Default()
+	r := gin.New()
+	r.Use(middleware.RequestLogger(logger), middleware.Recovery(logger))
 
 	v1 := r.Group("/api/v1")
 	{
@@ -105,6 +119,7 @@ func run() (runErr error) {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	serverDone := make(chan error, 1)
+	logger.Info("starting HTTP server", "address", server.Addr)
 	go func() {
 		serverDone <- server.ListenAndServe()
 	}()
@@ -118,7 +133,7 @@ func run() (runErr error) {
 
 	select {
 	case <-signalCtx.Done():
-		log.Println("shutdown signal received")
+		logger.Info("shutdown signal received")
 		runErr = errors.Join(runErr, shutdownHTTPServer(server, serverDone, 10*time.Second))
 
 	case serverErr := <-serverDone:

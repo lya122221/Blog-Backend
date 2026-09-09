@@ -3,7 +3,7 @@ package workers
 import (
 	"blog/internal/repositories"
 	"context"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -39,7 +39,7 @@ func StartViewsUpdaterWorker(ctx context.Context, s *repositories.Storage) error
 		select {
 		case <-ticker.C:
 			if err := updateViews(s); err != nil {
-				log.Printf("failed to update article views: %v", err)
+				slog.Error("failed to update article views", "error", err)
 			}
 		case <-ctx.Done():
 			return nil
