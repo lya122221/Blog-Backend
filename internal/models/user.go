@@ -1,8 +1,8 @@
 package models
 
 type User struct {
-	Email    string `json:"email" binding:"required,email"`
-	Username string `json:"username" binding:"required"`
+	Email        string `json:"email" binding:"required,email"`
+	Username     string `json:"username" binding:"required"`
 	PasswordHash string `json:"password" binding:"required"`
 }
 
