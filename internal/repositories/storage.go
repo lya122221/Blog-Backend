@@ -3,6 +3,7 @@ package repositories
 import (
 	"context"
 	"database/sql"
+	"errors"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/redis/go-redis/v9"
@@ -58,13 +59,5 @@ func NewStorage(pgDSN string, redisDSN string) (*Storage, error) {
 }
 
 func (s *Storage) Close() error {
-	if err := s.redis.Close(); err != nil {
-		return err
-	}
-
-	if err := s.db.Close(); err != nil {
-		return err
-	}
-
-	return nil
+	return errors.Join(s.redis.Close(), s.db.Close())
 }
