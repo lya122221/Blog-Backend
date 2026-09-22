@@ -34,7 +34,7 @@ func (s *Storage) GetArticlesWithoutTags(limit int, offset int) (*sql.Rows, erro
 		FROM articles
 		INNER JOIN users 
 			ON articles.author_id = users.id 
-		ORDER BY articles.created_at DESC
+		ORDER BY articles.created_at DESC, articles.id DESC
 		LIMIT $1 OFFSET $2
 	`, limit, offset)
 }
@@ -65,7 +65,7 @@ func (s *Storage) GetArticlesWithTags(limit int, offset int, tags []string) (*sq
 			ON tags.id = article_tags.tag_id
 		WHERE tags.name = ANY($1)
 		GROUP BY articles.id, users.id
-		ORDER BY articles.created_at DESC
+		ORDER BY articles.created_at DESC, articles.id DESC
 		LIMIT $2 OFFSET $3
 	`, tags, limit, offset)
 }

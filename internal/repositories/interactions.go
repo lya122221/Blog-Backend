@@ -19,7 +19,7 @@ func (s *Storage) GetComments(articleID uuid.UUID) ([]models.Comment, error) {
 		INNER JOIN users 
 			ON comments.user_id = users.id
 		WHERE comments.article_id = $1
-		ORDER BY comments.created_at ASC
+		ORDER BY comments.created_at ASC, comments.id ASC
 	`, articleID)
 
 	if err != nil {
