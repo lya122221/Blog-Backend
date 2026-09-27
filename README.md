@@ -76,9 +76,6 @@ PostgreSQL. Это уменьшает количество записей в о�
 
 ```mermaid
 erDiagram
-    USERS ||--o{ ARTICLES : writes
-    USERS ||--o{ COMMENTS : writes
-    USERS ||--o{ LIKES : adds
     ARTICLES ||--o{ COMMENTS : has
     ARTICLES ||--o{ LIKES : receives
     ARTICLES ||--o{ ARTICLE_TAGS : has
@@ -94,7 +91,8 @@ erDiagram
     }
     ARTICLES {
         uuid id PK
-        uuid author_id FK
+        uuid author_id
+        varchar author_username
         varchar title
         text content
         int views_count
@@ -111,15 +109,23 @@ erDiagram
     COMMENTS {
         uuid id PK
         uuid article_id FK
-        uuid user_id FK
+        uuid user_id
+        varchar author_username
         text content
         timestamptz created_at
     }
     LIKES {
         uuid article_id PK, FK
-        uuid user_id PK, FK
+        uuid user_id PK
     }
 ```
+
+Миграция `000007` сохраняет имена авторов существующих статей и комментариев
+в самих записях и убирает внешние ключи на `users` блога. Поля
+`author_username` пока допускают `NULL`: старый код ещё создаёт записи без них.
+После перевода записи на данные JWT пропуски будут заполнены, а поля станут
+обязательными. Таблица `users` остаётся для старых маршрутов авторизации до их
+переключения.
 
 ## Быстрый запуск
 
@@ -172,8 +178,9 @@ Compose запустит две отдельные базы PostgreSQL, Redis, �
 блог: публичные маршруты регистрации и входа пока остаются в нём. В auth-сервисе
 уже есть оба маршрута: `POST /api/v1/auth/register` и `POST /api/v1/auth/login`.
 Новый вход выдаёт JWT с `user_id` и `username`, подписанный Ed25519. Proxy
-переключится на auth-сервис после удаления зависимостей статей, комментариев и
-лайков от локальной таблицы `users` в блоге. Middleware для локальной проверки
+переключится на auth-сервис после перевода SQL-запросов статей и комментариев
+на сохранённые имена авторов вместо JOIN с локальной таблицей `users`.
+Middleware для локальной проверки
 новых JWT уже добавлен, но пока не подключён к маршрутам. Текущие публичные
 маршруты пока используют прежний HS256 middleware.
 Порты API, auth-сервиса, PostgreSQL и Redis не публикуются на хосте.
