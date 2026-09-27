@@ -1,9 +1,11 @@
 package main
 
 import (
+	"auth/internal/handlers"
 	applog "auth/internal/logger"
 	"auth/internal/middleware"
 	"auth/internal/repositories"
+	"auth/internal/services"
 	"context"
 	"errors"
 	"fmt"
@@ -63,6 +65,14 @@ func run() (runErr error) {
 
 	r := gin.New()
 	r.Use(middleware.RequestLogger(logger), middleware.Recovery(logger))
+
+	v1 := r.Group("/api/v1")
+	{
+		userHandler := handlers.NewUserHandler(services.NewUserService(storage))
+
+		auth := v1.Group("/auth")
+		auth.POST("/register", userHandler.RegisterUser)
+	}
 
 	server := &http.Server{
 		Addr:              ":8081",

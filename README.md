@@ -49,7 +49,7 @@ Blog-Backend/
 │   └── Dockerfile
 ├── auth/                     # Самостоятельный Go-модуль auth-сервиса
 │   ├── cmd/auth/             # Точка входа и graceful shutdown
-│   ├── internal/             # Собственные logger, middleware и repositories
+│   ├── internal/             # Собственные handlers, services, repositories и другие пакеты
 │   ├── migrations/           # Миграции БД auth-сервиса
 │   ├── go.mod
 │   └── Dockerfile
@@ -167,8 +167,9 @@ docker compose up --build
 
 Compose запустит две отдельные базы PostgreSQL, Redis, миграции обоих сервисов
 и reverse proxy на `http://localhost:8080`. Сейчас proxy передаёт все запросы в
-блог: публичные маршруты регистрации и входа пока остаются в нём. Auth-сервис
-запускается отдельно, но его HTTP-обработчики будут добавлены в следующих шагах.
+блог: публичные маршруты регистрации и входа пока остаются в нём. В auth-сервисе
+уже есть внутренний маршрут регистрации `POST /api/v1/auth/register`, но proxy
+переключится на него вместе с маршрутом входа после переноса обоих обработчиков.
 Порты API, auth-сервиса, PostgreSQL и Redis не публикуются на хосте.
 
 Посмотреть логи:
