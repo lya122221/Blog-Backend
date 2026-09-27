@@ -79,6 +79,8 @@ services:
   auth:
     build: ./auth
     restart: always
+    env_file:
+      - ./auth/.env
     environment:
       AUTH_POSTGRES_USER: ${AUTH_POSTGRES_USER}
       AUTH_POSTGRES_PASSWORD: ${AUTH_POSTGRES_PASSWORD}

@@ -9,7 +9,7 @@ JWT-аутентификацию, публикацию статей с тега�
 ## Возможности
 
 - регистрация и вход по email и паролю;
-- JWT-аутентификация с алгоритмом HS256;
+- JWT-аутентификация: текущий публичный маршрут использует HS256, новый auth-сервис выдаёт EdDSA-токены;
 - создание, чтение, обновление и удаление статей;
 - проверка авторства при обновлении и удалении статьи;
 - теги, фильтрация и пагинация;
@@ -30,7 +30,7 @@ JWT-аутентификацию, публикацию статей с тега�
 | База данных | PostgreSQL 15 |
 | Драйвер PostgreSQL | pgx через `database/sql` |
 | Кэш и просмотры | Redis 7 |
-| Аутентификация | JWT HS256 и bcrypt |
+| Аутентификация | JWT HS256 в блоге, JWT EdDSA в auth-сервисе, bcrypt |
 | Миграции | golang-migrate |
 | Логирование | `log/slog` |
 | Контейнеры | Docker и Docker Compose |
@@ -157,7 +157,9 @@ LOG_FORMAT=json
 openssl rand -hex 32
 ```
 
-Не добавляйте `.env` в Git.
+Создайте также `auth/.env` по образцу `auth/.env.example`. Значение
+`AUTH_JWT_PRIVATE_KEY` получите командой `openssl rand -base64 32`.
+Не добавляйте файлы `.env` в Git.
 
 ### 3. Запуск
 
@@ -168,8 +170,9 @@ docker compose up --build
 Compose запустит две отдельные базы PostgreSQL, Redis, миграции обоих сервисов
 и reverse proxy на `http://localhost:8080`. Сейчас proxy передаёт все запросы в
 блог: публичные маршруты регистрации и входа пока остаются в нём. В auth-сервисе
-уже есть внутренний маршрут регистрации `POST /api/v1/auth/register`, но proxy
-переключится на него вместе с маршрутом входа после переноса обоих обработчиков.
+уже есть оба маршрута: `POST /api/v1/auth/register` и `POST /api/v1/auth/login`.
+Новый вход выдаёт JWT с `user_id` и `username`, подписанный Ed25519. Proxy
+переключится на auth-сервис после обновления проверки JWT в блоге.
 Порты API, auth-сервиса, PostgreSQL и Redis не публикуются на хосте.
 
 Посмотреть логи:
@@ -200,6 +203,7 @@ PostgreSQL сохраняются в отдельных volumes `postgres_data` 
 | `AUTH_POSTGRES_PASSWORD` | да | — | Пароль PostgreSQL auth-сервиса |
 | `AUTH_POSTGRES_DB` | да | — | Имя базы данных auth-сервиса |
 | `AUTH_POSTGRES_HOST` | нет | `localhost` | Хост PostgreSQL auth-сервиса; в Compose используется `auth_db` |
+| `AUTH_JWT_PRIVATE_KEY` | да, для auth-сервиса | — | Base64-кодированный 32-байтный seed Ed25519 в `auth/.env` |
 | `REDIS_HOST` | нет | `localhost` | Хост Redis; в Compose используется `redis` |
 | `JWTKEY` | да | — | Секрет подписи JWT |
 | `LOG_LEVEL` | нет | `info` | `debug`, `info`, `warn` или `error` |
@@ -208,6 +212,13 @@ PostgreSQL сохраняются в отдельных volumes `postgres_data` 
 На хосте публикуется только порт `8080` публичного proxy. Внутри сети Compose
 API слушает порт `8080`, auth-сервис — `8081`, обе базы PostgreSQL — `5432`,
 Redis — `6379`.
+
+Для нового JWT auth-сервис читает закрытый ключ из `auth/.env`. Создайте файл
+по образцу [`auth/.env.example`](auth/.env.example) и подставьте результат
+`openssl rand -base64 32`. Файл `auth/.env` игнорируется Git и не попадает в
+Docker-образ; Compose передаёт его переменные только auth-сервису. До
+переключения proxy блог продолжает использовать старый `JWTKEY` из корневого
+`.env`.
 
 ## API
 

@@ -6,6 +6,7 @@ import (
 	"auth/internal/middleware"
 	"auth/internal/repositories"
 	"auth/internal/services"
+	"auth/internal/tokens"
 	"context"
 	"errors"
 	"fmt"
@@ -62,16 +63,21 @@ func run() (runErr error) {
 			logger.Info("application stopped")
 		}
 	}()
+	issuer, err := tokens.NewIssuer(os.Getenv("AUTH_JWT_PRIVATE_KEY"))
+	if err != nil {
+		return fmt.Errorf("configure JWT issuer: %w", err)
+	}
 
 	r := gin.New()
 	r.Use(middleware.RequestLogger(logger), middleware.Recovery(logger))
 
 	v1 := r.Group("/api/v1")
 	{
-		userHandler := handlers.NewUserHandler(services.NewUserService(storage))
+		userHandler := handlers.NewUserHandler(services.NewUserService(storage, issuer))
 
 		auth := v1.Group("/auth")
 		auth.POST("/register", userHandler.RegisterUser)
+		auth.POST("/login", userHandler.LoginUser)
 	}
 
 	server := &http.Server{
