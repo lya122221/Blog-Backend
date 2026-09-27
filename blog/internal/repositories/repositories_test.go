@@ -135,6 +135,9 @@ func articleValues(id string) []driver.Value {
 func TestArticleReadRepository(t *testing.T) {
 	c := &testConn{}
 	c.query = func(q string, a []driver.NamedValue) (driver.Rows, error) {
+		if has(q, "users") {
+			t.Fatalf("article read depends on blog users: %s", q)
+		}
 		switch {
 		case has(q, "WHERE tags.name = ANY"):
 			if len(a) != 3 {
@@ -180,12 +183,8 @@ func TestArticleReadRepository(t *testing.T) {
 
 func TestArticleWriteRepository(t *testing.T) {
 	c := &testConn{}
-	lookupCalls := 0
 	c.query = func(q string, a []driver.NamedValue) (driver.Rows, error) {
 		switch {
-		case has(q, "SELECT username FROM users"):
-			lookupCalls++
-			return rows([]string{"username"}, []driver.Value{"alice"}), nil
 		case has(q, "INSERT INTO articles"):
 			if len(a) != 4 || a[0].Value != "author-1" || a[1].Value != "alice" {
 				t.Fatalf("unexpected article insert: %v", a)
@@ -207,12 +206,6 @@ func TestArticleWriteRepository(t *testing.T) {
 	s := &Storage{db: openTestDB(t, c)}
 	if err := s.CreateArticle("author-1", "alice", "title", "body", []string{"go", "test"}); err != nil {
 		t.Fatalf("CreateArticle: %v", err)
-	}
-	if lookupCalls != 0 {
-		t.Fatalf("unexpected user lookup for JWT username: %d", lookupCalls)
-	}
-	if err := s.CreateArticle("author-1", "", "legacy", "body", nil); err != nil || lookupCalls != 1 {
-		t.Fatalf("legacy CreateArticle: err=%v lookups=%d", err, lookupCalls)
 	}
 	id := uuid.New()
 	request := models.UpdateArticleRequest{Title: "new", Content: "new body", Tags: []string{"go"}}
@@ -254,15 +247,9 @@ func TestArticleWriteRepository(t *testing.T) {
 
 func TestCreateArticleWithoutAuthorUsername(t *testing.T) {
 	c := &testConn{}
-	c.query = func(q string, _ []driver.NamedValue) (driver.Rows, error) {
-		if !has(q, "SELECT username FROM users") {
-			t.Fatalf("unexpected query: %s", q)
-		}
-		return rows([]string{"username"}), nil
-	}
 	s := &Storage{db: openTestDB(t, c)}
-	if err := s.CreateArticle("missing", "", "title", "body", nil); !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("missing legacy user error: %v", err)
+	if err := s.CreateArticle("author-1", "", "title", "body", nil); err == nil {
+		t.Fatal("expected missing username error")
 	}
 }
 
@@ -270,8 +257,8 @@ func TestInteractionsRepository(t *testing.T) {
 	c := &testConn{}
 	likedRows := int64(0)
 	c.query = func(q string, a []driver.NamedValue) (driver.Rows, error) {
-		if has(q, "SELECT username FROM users") {
-			t.Fatal("unexpected local user lookup for JWT with username")
+		if has(q, "users") {
+			t.Fatalf("comment read depends on blog users: %s", q)
 		}
 		if has(q, "SELECT COUNT(*)") {
 			return rows([]string{"count"}, []driver.Value{int64(3)}), nil
@@ -323,30 +310,8 @@ func TestInteractionsRepository(t *testing.T) {
 
 func TestCreateCommentWithoutAuthorUsername(t *testing.T) {
 	c := &testConn{}
-	c.query = func(q string, a []driver.NamedValue) (driver.Rows, error) {
-		if !has(q, "SELECT username FROM users") || len(a) != 1 || a[0].Value != "u1" {
-			t.Fatalf("unexpected query: %s %+v", q, a)
-		}
-		return rows([]string{"username"}, []driver.Value{"alice"}), nil
-	}
-	c.exec = func(q string, a []driver.NamedValue) (driver.Result, error) {
-		if !has(q, "INSERT INTO comments (article_id, user_id, author_username, content)") || len(a) != 4 || a[1].Value != "u1" || a[2].Value != "alice" || a[3].Value != "hello" {
-			t.Fatalf("unexpected comment insert: %s %+v", q, a)
-		}
-		return driver.RowsAffected(1), nil
-	}
 	s := &Storage{db: openTestDB(t, c)}
-	if err := s.CreateComment(uuid.New(), "u1", "", "hello"); err != nil {
-		t.Fatalf("legacy comment: %v", err)
-	}
-
-	c.query = func(q string, _ []driver.NamedValue) (driver.Rows, error) {
-		if !has(q, "SELECT username FROM users") {
-			t.Fatalf("unexpected query: %s", q)
-		}
-		return rows([]string{"username"}), nil
-	}
-	if err := s.CreateComment(uuid.New(), "missing", "", "hello"); !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("missing legacy user error: %v", err)
+	if err := s.CreateComment(uuid.New(), "author-1", "", "hello"); err == nil {
+		t.Fatal("expected missing username error")
 	}
 }

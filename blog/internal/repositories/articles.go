@@ -23,17 +23,15 @@ func (s *Storage) GetArticlesWithoutTags(limit int, offset int) (*sql.Rows, erro
 			articles.views_count,
 			articles.created_at,
 			articles.author_id,
-			COALESCE(articles.author_username, users.username) AS author_username,
+			articles.author_username,
 			COALESCE((
-        SELECT array_agg(tags.name)
-        FROM article_tags at
-        INNER JOIN tags 
-          ON tags.id = at.tag_id
-        WHERE at.article_id = articles.id
-    	), '{}') AS all_tags
+				SELECT array_agg(tags.name)
+				FROM article_tags at
+				JOIN tags 
+				  ON tags.id = at.tag_id
+				WHERE at.article_id = articles.id
+			), '{}') AS all_tags
 		FROM articles
-		LEFT JOIN users
-			ON articles.author_id = users.id 
 		ORDER BY articles.created_at DESC, articles.id DESC
 		LIMIT $1 OFFSET $2
 	`, limit, offset)
@@ -48,23 +46,21 @@ func (s *Storage) GetArticlesWithTags(limit int, offset int, tags []string) (*sq
 			articles.views_count,
 			articles.created_at,
 			articles.author_id,
-			COALESCE(articles.author_username, users.username) AS author_username,
+			articles.author_username,
 			COALESCE((
-        SELECT array_agg(tags.name)
-        FROM article_tags at
-        INNER JOIN tags 
-          ON tags.id = at.tag_id
-        WHERE at.article_id = articles.id
-    	), '{}') AS all_tags
+				SELECT array_agg(tags.name)
+				FROM article_tags at
+				JOIN tags 
+				  ON tags.id = at.tag_id
+				WHERE at.article_id = articles.id
+			), '{}') AS all_tags
 		FROM articles
-		LEFT JOIN users
-			ON articles.author_id = users.id 
-		INNER JOIN article_tags
+		JOIN article_tags
 			ON article_tags.article_id = articles.id
-		INNER JOIN tags
+		JOIN tags
 			ON tags.id = article_tags.tag_id
 		WHERE tags.name = ANY($1)
-		GROUP BY articles.id, users.id
+		GROUP BY articles.id
 		ORDER BY articles.created_at DESC, articles.id DESC
 		LIMIT $2 OFFSET $3
 	`, tags, limit, offset)
@@ -117,6 +113,10 @@ func (s *Storage) GetArticles(limit int, offset int, tags []string) ([]models.Ar
 }
 
 func (s *Storage) CreateArticle(authorID, authorUsername, title, content string, tags []string) error {
+	if authorUsername == "" {
+		return errors.New("author username is missing")
+	}
+
 	tx, err := s.db.Begin()
 
 	if err != nil {
@@ -126,17 +126,6 @@ func (s *Storage) CreateArticle(authorID, authorUsername, title, content string,
 	defer func() {
 		_ = tx.Rollback()
 	}()
-	if authorUsername == "" {
-		err = tx.QueryRow(`
-			SELECT username
-			FROM users
-			WHERE id = $1
-		`, authorID).Scan(&authorUsername)
-		if err != nil {
-			return err
-		}
-	}
-
 	var articleID string
 	err = tx.QueryRow(`
 		INSERT INTO articles (author_id, author_username, title, content)
@@ -188,7 +177,7 @@ func (s *Storage) GetArticleWithID(articleID uuid.UUID) (*models.Article, error)
 			articles.content,
 			articles.views_count,
 			articles.created_at,
-			COALESCE(articles.author_username, users.username),
+			articles.author_username,
 			articles.author_id,
 			COALESCE((
 				SELECT array_agg(t.name)
@@ -198,8 +187,6 @@ func (s *Storage) GetArticleWithID(articleID uuid.UUID) (*models.Article, error)
 				WHERE at.article_id = articles.id
 			), '{}')
 		FROM articles
-		LEFT JOIN users
-			ON articles.author_id = users.id
 		WHERE articles.id = $1
 	`, articleID).Scan(
 		&article.ID,

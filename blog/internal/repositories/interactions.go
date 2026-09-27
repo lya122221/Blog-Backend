@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"blog/internal/models"
+	"errors"
 
 	"github.com/google/uuid"
 )
@@ -12,12 +13,10 @@ func (s *Storage) GetComments(articleID uuid.UUID) ([]models.Comment, error) {
 			comments.id,
 			comments.article_id,
 			comments.user_id AS author_id,
-			COALESCE(comments.author_username, users.username) AS author_username,
+			comments.author_username,
 			comments.content,
 			comments.created_at
 		FROM comments
-		LEFT JOIN users
-			ON comments.user_id = users.id
 		WHERE comments.article_id = $1
 		ORDER BY comments.created_at ASC, comments.id ASC
 	`, articleID)
@@ -57,14 +56,7 @@ func (s *Storage) GetComments(articleID uuid.UUID) ([]models.Comment, error) {
 
 func (s *Storage) CreateComment(articleID uuid.UUID, authorID string, authorUsername string, content string) error {
 	if authorUsername == "" {
-		err := s.db.QueryRow(`
-			SELECT username
-			FROM users
-			WHERE id = $1
-		`, authorID).Scan(&authorUsername)
-		if err != nil {
-			return err
-		}
+		return errors.New("author username is missing")
 	}
 
 	_, err := s.db.Exec(`

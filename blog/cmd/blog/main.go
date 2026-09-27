@@ -40,6 +40,11 @@ func run() (runErr error) {
 	}
 	slog.SetDefault(logger)
 
+	jwtMiddleware, err := middleware.AuthMiddleware(os.Getenv("BLOG_JWT_PUBLIC_KEY"))
+	if err != nil {
+		return fmt.Errorf("configure JWT middleware: %w", err)
+	}
+
 	pgHost := os.Getenv("POSTGRES_HOST")
 	if pgHost == "" {
 		pgHost = "localhost"
@@ -74,15 +79,6 @@ func run() (runErr error) {
 
 	v1 := r.Group("/api/v1")
 	{
-		userService := services.NewUserService(storage)
-		userHandler := handlers.NewUserHandler(userService)
-
-		auth := v1.Group("/auth")
-		{
-			auth.POST("/register", userHandler.RegisterUser)
-			auth.POST("/login", userHandler.LoginUser)
-		}
-
 		articlesService := services.NewArticlesService(storage)
 		articlesHandler := handlers.NewArticlesHandler(articlesService)
 
@@ -97,7 +93,7 @@ func run() (runErr error) {
 			articles.GET("/:id/comments", interactionsHandler.GetCommentsHandler)
 
 			// private
-			articles.Use(middleware.HS256AuthMiddleware())
+			articles.Use(jwtMiddleware)
 			articles.POST("/", articlesHandler.CreateArticlesHandler)
 			articles.PUT("/:id", articlesHandler.UpdateArticleHandler)
 			articles.DELETE("/:id", articlesHandler.DeleteArticleHandler)

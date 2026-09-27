@@ -4,9 +4,17 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestRunRequiresPublicKey(t *testing.T) {
+	t.Setenv("BLOG_JWT_PUBLIC_KEY", "")
+	if err := run(); err == nil || !strings.Contains(err.Error(), "configure JWT middleware") {
+		t.Fatalf("expected JWT configuration error, got %v", err)
+	}
+}
 
 type serverStub struct {
 	shutdownErr    error
