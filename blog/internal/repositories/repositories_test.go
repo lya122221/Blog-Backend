@@ -180,9 +180,16 @@ func TestArticleReadRepository(t *testing.T) {
 
 func TestArticleWriteRepository(t *testing.T) {
 	c := &testConn{}
+	lookupCalls := 0
 	c.query = func(q string, a []driver.NamedValue) (driver.Rows, error) {
 		switch {
+		case has(q, "SELECT username FROM users"):
+			lookupCalls++
+			return rows([]string{"username"}, []driver.Value{"alice"}), nil
 		case has(q, "INSERT INTO articles"):
+			if len(a) != 4 || a[0].Value != "author-1" || a[1].Value != "alice" {
+				t.Fatalf("unexpected article insert: %v", a)
+			}
 			return rows([]string{"id"}, []driver.Value{"article-1"}), nil
 		case has(q, "INSERT INTO tags"):
 			return rows([]string{"id"}, []driver.Value{"tag-1"}), nil
@@ -198,8 +205,14 @@ func TestArticleWriteRepository(t *testing.T) {
 		return driver.RowsAffected(1), nil
 	}
 	s := &Storage{db: openTestDB(t, c)}
-	if err := s.CreateArticle("author-1", "title", "body", []string{"go", "test"}); err != nil {
+	if err := s.CreateArticle("author-1", "alice", "title", "body", []string{"go", "test"}); err != nil {
 		t.Fatalf("CreateArticle: %v", err)
+	}
+	if lookupCalls != 0 {
+		t.Fatalf("unexpected user lookup for JWT username: %d", lookupCalls)
+	}
+	if err := s.CreateArticle("author-1", "", "legacy", "body", nil); err != nil || lookupCalls != 1 {
+		t.Fatalf("legacy CreateArticle: err=%v lookups=%d", err, lookupCalls)
 	}
 	id := uuid.New()
 	request := models.UpdateArticleRequest{Title: "new", Content: "new body", Tags: []string{"go"}}
@@ -223,7 +236,7 @@ func TestArticleWriteRepository(t *testing.T) {
 		t.Fatal("expected delete authorization error")
 	}
 	c.beginErr = errors.New("begin")
-	if err := s.CreateArticle("a", "t", "c", nil); err == nil {
+	if err := s.CreateArticle("a", "alice", "t", "c", nil); err == nil {
 		t.Fatal("expected begin error")
 	}
 	if err := s.UpdateArticle("a", id, request); err == nil {
@@ -236,6 +249,20 @@ func TestArticleWriteRepository(t *testing.T) {
 	c.exec = func(string, []driver.NamedValue) (driver.Result, error) { return nil, errors.New("exec") }
 	if err := s.UpdateArticleViews(1, id); err == nil {
 		t.Fatal("expected views update error")
+	}
+}
+
+func TestCreateArticleWithoutAuthorUsername(t *testing.T) {
+	c := &testConn{}
+	c.query = func(q string, _ []driver.NamedValue) (driver.Rows, error) {
+		if !has(q, "SELECT username FROM users") {
+			t.Fatalf("unexpected query: %s", q)
+		}
+		return rows([]string{"username"}), nil
+	}
+	s := &Storage{db: openTestDB(t, c)}
+	if err := s.CreateArticle("missing", "", "title", "body", nil); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("missing legacy user error: %v", err)
 	}
 }
 

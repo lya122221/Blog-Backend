@@ -116,7 +116,7 @@ func (s *Storage) GetArticles(limit int, offset int, tags []string) ([]models.Ar
 	return articles, nil
 }
 
-func (s *Storage) CreateArticle(authorID, title, content string, tags []string) error {
+func (s *Storage) CreateArticle(authorID, authorUsername, title, content string, tags []string) error {
 	tx, err := s.db.Begin()
 
 	if err != nil {
@@ -126,13 +126,23 @@ func (s *Storage) CreateArticle(authorID, title, content string, tags []string) 
 	defer func() {
 		_ = tx.Rollback()
 	}()
+	if authorUsername == "" {
+		err = tx.QueryRow(`
+			SELECT username
+			FROM users
+			WHERE id = $1
+		`, authorID).Scan(&authorUsername)
+		if err != nil {
+			return err
+		}
+	}
 
 	var articleID string
 	err = tx.QueryRow(`
-		INSERT INTO articles (author_id, title, content)
-		VALUES ($1, $2, $3)
+		INSERT INTO articles (author_id, author_username, title, content)
+		VALUES ($1, $2, $3, $4)
 		RETURNING id
-	`, authorID, title, content).Scan(&articleID)
+	`, authorID, authorUsername, title, content).Scan(&articleID)
 
 	if err != nil {
 		return err

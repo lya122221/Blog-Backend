@@ -8,7 +8,7 @@ import (
 
 type ArticlesRepository interface {
 	GetArticles(limit int, offset int, tags []string) ([]models.Article, error)
-	CreateArticle(authorID, title, content string, tags []string) error
+	CreateArticle(authorID, authorUsername, title, content string, tags []string) error
 	GetArticleWithID(articleID uuid.UUID) (*models.Article, error)
 	UpdateArticle(authorID string, articleID uuid.UUID, request models.UpdateArticleRequest) error
 	DeleteArticle(authorID string, articleID uuid.UUID) error
@@ -35,7 +35,7 @@ func (s *ArticlesService) GetArticles(page int, limit int, tags []string) ([]mod
 }
 
 func (s *ArticlesService) CreateArticle(article models.Article) error {
-	return s.repo.CreateArticle(article.Author.ID, article.Title, article.Content, article.Tags)
+	return s.repo.CreateArticle(article.Author.ID, article.Author.Username, article.Title, article.Content, article.Tags)
 }
 
 func (s *ArticlesService) GetArticleWithID(idString string) (*models.Article, error) {

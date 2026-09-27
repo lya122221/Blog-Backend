@@ -72,23 +72,23 @@ func TestUserServiceErrors(t *testing.T) {
 }
 
 type articlesRepoStub struct {
-	articles                 []models.Article
-	article                  *models.Article
-	err                      error
-	limit, offset            int
-	tags                     []string
-	authorID, title, content string
-	articleID                uuid.UUID
-	request                  models.UpdateArticleRequest
-	incremented              chan uuid.UUID
+	articles                                 []models.Article
+	article                                  *models.Article
+	err                                      error
+	limit, offset                            int
+	tags                                     []string
+	authorID, authorUsername, title, content string
+	articleID                                uuid.UUID
+	request                                  models.UpdateArticleRequest
+	incremented                              chan uuid.UUID
 }
 
 func (r *articlesRepoStub) GetArticles(limit, offset int, tags []string) ([]models.Article, error) {
 	r.limit, r.offset, r.tags = limit, offset, tags
 	return r.articles, r.err
 }
-func (r *articlesRepoStub) CreateArticle(authorID, title, content string, tags []string) error {
-	r.authorID, r.title, r.content, r.tags = authorID, title, content, tags
+func (r *articlesRepoStub) CreateArticle(authorID, authorUsername, title, content string, tags []string) error {
+	r.authorID, r.authorUsername, r.title, r.content, r.tags = authorID, authorUsername, title, content, tags
 	return r.err
 }
 func (r *articlesRepoStub) GetArticleWithID(id uuid.UUID) (*models.Article, error) {
@@ -119,8 +119,8 @@ func TestArticlesService(t *testing.T) {
 	if err != nil || len(articles) != 1 || repo.limit != 10 || repo.offset != 20 {
 		t.Fatalf("GetArticles result=%+v call=%d/%d err=%v", articles, repo.limit, repo.offset, err)
 	}
-	a := models.Article{Title: "title", Content: "body", Tags: []string{"go"}, Author: models.Author{ID: "author"}}
-	if err := svc.CreateArticle(a); err != nil || repo.authorID != "author" || repo.title != "title" {
+	a := models.Article{Title: "title", Content: "body", Tags: []string{"go"}, Author: models.Author{ID: "author", Username: "alice"}}
+	if err := svc.CreateArticle(a); err != nil || repo.authorID != "author" || repo.authorUsername != "alice" || repo.title != "title" {
 		t.Fatalf("CreateArticle call not forwarded: %v %+v", err, repo)
 	}
 	got, err := svc.GetArticleWithID(id.String())

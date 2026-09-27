@@ -64,6 +64,7 @@ func (h *ArticlesHandler) CreateArticlesHandler(c *gin.Context) {
 		return
 	}
 	article.Author.ID = authorID
+	article.Author.Username = c.GetString("username")
 
 	if err := h.service.CreateArticle(article); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create article"})

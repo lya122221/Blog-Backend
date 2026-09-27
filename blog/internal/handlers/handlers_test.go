@@ -95,11 +95,30 @@ func TestGetArticlesHandler(t *testing.T) {
 func TestCreateArticleHandler(t *testing.T) {
 	s := &articlesServiceStub{}
 	h := NewArticlesHandler(s)
-	body := models.Article{Title: "title", Content: "body", Tags: []string{"go"}}
+	body := models.Article{Title: "title", Content: "body", Tags: []string{"go"}, Author: models.Author{ID: "spoofed", Username: "spoofed"}}
 	w := perform(http.MethodPost, "/articles", "/articles", body, "u1", h.CreateArticlesHandler)
 	assertStatus(t, w, http.StatusCreated)
-	if s.created.Author.ID != "u1" || s.created.Title != "title" {
+	if s.created.Author.ID != "u1" || s.created.Author.Username != "" || s.created.Title != "title" {
 		t.Fatalf("unexpected article: %+v", s.created)
+	}
+
+	r := gin.New()
+	r.POST("/articles", func(c *gin.Context) {
+		c.Set("userID", "u2")
+		c.Set("username", "alice")
+		h.CreateArticlesHandler(c)
+	})
+	data, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/articles", bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	assertStatus(t, w, http.StatusCreated)
+	if s.created.Author.ID != "u2" || s.created.Author.Username != "alice" {
+		t.Fatalf("unexpected article author: %+v", s.created.Author)
 	}
 
 	cases := []struct {
