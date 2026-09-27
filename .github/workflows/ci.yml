@@ -20,9 +20,12 @@ concurrency:
 
 jobs:
   lint:
-    name: Lint
+    name: Lint (${{ matrix.service }})
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      matrix:
+        service: [blog, auth]
 
     steps:
       - name: Check out repository
@@ -31,18 +34,22 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version-file: go.mod
-          cache-dependency-path: go.sum
+          go-version-file: ${{ matrix.service }}/go.mod
+          cache-dependency-path: ${{ matrix.service }}/go.sum
 
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
           version: v2.12.2
+          working-directory: ${{ matrix.service }}
 
   test:
-    name: Test and build
+    name: Test and build (${{ matrix.service }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      matrix:
+        service: [blog, auth]
 
     steps:
       - name: Check out repository
@@ -51,14 +58,16 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version-file: go.mod
-          cache-dependency-path: go.sum
+          go-version-file: ${{ matrix.service }}/go.mod
+          cache-dependency-path: ${{ matrix.service }}/go.sum
 
       - name: Download dependencies
         run: go mod download
+        working-directory: ${{ matrix.service }}
 
       - name: Check formatting
         shell: bash
+        working-directory: ${{ matrix.service }}
         run: |
           unformatted="$(gofmt -l .)"
           if [[ -n "$unformatted" ]]; then
@@ -69,18 +78,21 @@ jobs:
 
       - name: Run static analysis
         run: go vet ./...
+        working-directory: ${{ matrix.service }}
 
       - name: Run tests with race detector
         run: go test -race ./...
+        working-directory: ${{ matrix.service }}
 
       - name: Check test coverage
         shell: bash
+        working-directory: ${{ matrix.service }}
         run: |
           go test ./... -covermode=atomic -coverprofile=coverage.out
           coverage="$(go tool cover -func=coverage.out | awk '/^total:/ {gsub("%", "", $3); print $3}')"
           minimum="70"
-          echo "Total coverage: ${coverage}%"
-          echo "### Test coverage: ${coverage}%" >> "$GITHUB_STEP_SUMMARY"
+          echo "${{ matrix.service }} coverage: ${coverage}%"
+          echo "### ${{ matrix.service }} test coverage: ${coverage}%" >> "$GITHUB_STEP_SUMMARY"
           awk -v coverage="$coverage" -v minimum="$minimum" 'BEGIN {
             if (coverage + 0 < minimum + 0) {
               printf "Coverage %.1f%% is below the required %.1f%%\n", coverage, minimum
@@ -91,24 +103,34 @@ jobs:
       - name: Upload coverage report
         uses: actions/upload-artifact@v5
         with:
-          name: coverage-report
-          path: coverage.out
+          name: coverage-report-${{ matrix.service }}
+          path: ${{ matrix.service }}/coverage.out
           retention-days: 14
 
       - name: Build application
-        run: go build -trimpath -o /tmp/blog-api ./cmd/blog
+        run: go build -trimpath -o /tmp/${{ matrix.service }}-api ./cmd/${{ matrix.service }}
+        working-directory: ${{ matrix.service }}
 
       - name: Build Docker image
-        run: docker build --tag blog-backend:ci .
+        run: docker build --tag ${{ matrix.service }}:ci ./${{ matrix.service }}
 
   publish:
-    name: Publish Docker image
+    name: Publish (${{ matrix.service }})
     if: github.event_name == 'push'
     needs:
       - lint
       - test
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      matrix:
+        include:
+          - service: blog
+            image_suffix: ""
+            cache_scope: blog-backend
+          - service: auth
+            image_suffix: -auth
+            cache_scope: blog-auth
     permissions:
       contents: read
       packages: write
@@ -123,7 +145,7 @@ jobs:
       - name: Set image name
         id: image
         shell: bash
-        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}${{ matrix.image_suffix }}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -151,14 +173,14 @@ jobs:
         id: push
         uses: docker/build-push-action@v7
         with:
-          context: .
-          file: ./Dockerfile
+          context: ./${{ matrix.service }}
+          file: ./${{ matrix.service }}/Dockerfile
           platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=blog-backend
-          cache-to: type=gha,mode=max,scope=blog-backend
+          cache-from: type=gha,scope=${{ matrix.cache_scope }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.cache_scope }}
 
       - name: Generate artifact attestation
         uses: actions/attest@v4
@@ -170,7 +192,7 @@ jobs:
       - name: Add image details to summary
         shell: bash
         run: |
-          echo "### Docker image published" >> "$GITHUB_STEP_SUMMARY"
+          echo "### ${{ matrix.service }} Docker image published" >> "$GITHUB_STEP_SUMMARY"
           echo '```text' >> "$GITHUB_STEP_SUMMARY"
           echo "${{ steps.meta.outputs.tags }}" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"

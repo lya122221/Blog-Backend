@@ -15,6 +15,21 @@ services:
       timeout: 5s
       retries: 5
 
+  auth_db:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: ${AUTH_POSTGRES_USER:?set AUTH_POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${AUTH_POSTGRES_PASSWORD:?set AUTH_POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${AUTH_POSTGRES_DB:?set AUTH_POSTGRES_DB in .env}
+    volumes:
+      - auth_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${AUTH_POSTGRES_USER} -d ${AUTH_POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   redis:
     image: redis:7-alpine
     container_name: blog_redis
@@ -26,15 +41,22 @@ services:
       retries: 5
 
   migrate:
-    build: ./migrations
+    build: ./blog/migrations
     container_name: blog_migrate
     depends_on:
       db:
         condition: service_healthy
     command: ["-path=/migrations", "-database=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable", "up"]
 
+  auth_migrate:
+    build: ./auth/migrations
+    depends_on:
+      auth_db:
+        condition: service_healthy
+    command: ["-path=/migrations", "-database=postgres://${AUTH_POSTGRES_USER}:${AUTH_POSTGRES_PASSWORD}@auth_db:5432/${AUTH_POSTGRES_DB}?sslmode=disable", "up"]
+
   api:
-    build: .
+    build: ./blog
     container_name: blog_api
     restart: always
     environment:
@@ -54,6 +76,22 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  auth:
+    build: ./auth
+    restart: always
+    environment:
+      AUTH_POSTGRES_USER: ${AUTH_POSTGRES_USER}
+      AUTH_POSTGRES_PASSWORD: ${AUTH_POSTGRES_PASSWORD}
+      AUTH_POSTGRES_DB: ${AUTH_POSTGRES_DB}
+      AUTH_POSTGRES_HOST: auth_db
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+    depends_on:
+      auth_db:
+        condition: service_healthy
+      auth_migrate:
+        condition: service_completed_successfully
+
   proxy:
     build: ./proxy
     container_name: blog_proxy
@@ -65,3 +103,4 @@ services:
 
 volumes:
   postgres_data:
+  auth_postgres_data:

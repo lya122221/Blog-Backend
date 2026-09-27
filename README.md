@@ -40,22 +40,27 @@ JWT-аутентификацию, публикацию статей с тега�
 
 ```text
 Blog-Backend/
-├── cmd/blog/                 # Точка входа, HTTP-сервер и graceful shutdown
-├── internal/
-│   ├── handlers/             # HTTP-обработчики Gin
-│   ├── logger/               # Настройка slog
-│   ├── middleware/           # JWT, access logs и panic recovery
-│   ├── models/               # API- и доменные структуры
-│   ├── repositories/         # PostgreSQL и Redis
-│   ├── services/             # Бизнес-логика
-│   └── workers/              # Перенос просмотров из Redis в PostgreSQL
-├── migrations/               # SQL-миграции
-├── pkg/                      # JWT-утилиты
-├── .github/workflows/ci.yml  # CI и публикация Docker-образа
-├── .golangci.yml             # Конфигурация линтеров
-├── Dockerfile
+├── blog/                     # Самостоятельный Go-модуль основного API
+│   ├── cmd/blog/             # Точка входа и graceful shutdown
+│   ├── internal/             # Handlers, services, repositories и worker
+│   ├── migrations/           # Миграции БД блога
+│   ├── pkg/                  # Текущие JWT-утилиты блога
+│   ├── go.mod
+│   └── Dockerfile
+├── auth/                     # Самостоятельный Go-модуль auth-сервиса
+│   ├── cmd/auth/             # Точка входа и graceful shutdown
+│   ├── internal/             # Собственные logger, middleware и repositories
+│   ├── migrations/           # Миграции БД auth-сервиса
+│   ├── go.mod
+│   └── Dockerfile
+├── proxy/                    # Публичный reverse proxy
+├── .github/workflows/ci.yml  # Проверки и публикация образов обоих сервисов
 └── docker-compose.yml
 ```
+
+Сервисы не импортируют пакеты друг друга. В каждом сервисе свои зависимости,
+Dockerfile и миграции. На текущем этапе блог ещё содержит старые маршруты
+авторизации и таблицу `users`; перенос продолжится в следующих юнитах.
 
 Зависимости направлены от HTTP-обработчиков к сервисам, а от сервисов — к
 интерфейсам репозиториев. Благодаря этому сервисы и handlers тестируются без
@@ -138,6 +143,9 @@ cd Blog-Backend
 POSTGRES_USER=blog
 POSTGRES_PASSWORD=change_me
 POSTGRES_DB=blog
+AUTH_POSTGRES_USER=auth
+AUTH_POSTGRES_PASSWORD=change_me_too
+AUTH_POSTGRES_DB=auth
 JWTKEY=replace_with_a_long_random_secret
 LOG_LEVEL=info
 LOG_FORMAT=json
@@ -157,13 +165,16 @@ openssl rand -hex 32
 docker compose up --build
 ```
 
-Compose запустит PostgreSQL, Redis, применит миграции и поднимет API на
-`http://localhost:8080`.
+Compose запустит две отдельные базы PostgreSQL, Redis, миграции обоих сервисов
+и reverse proxy на `http://localhost:8080`. Сейчас proxy передаёт все запросы в
+блог: публичные маршруты регистрации и входа пока остаются в нём. Auth-сервис
+запускается отдельно, но его HTTP-обработчики будут добавлены в следующих шагах.
+Порты API, auth-сервиса, PostgreSQL и Redis не публикуются на хосте.
 
 Посмотреть логи:
 
 ```bash
-docker compose logs -f api
+docker compose logs -f proxy api auth
 ```
 
 Остановить приложение:
@@ -172,8 +183,9 @@ docker compose logs -f api
 docker compose down --timeout 20
 ```
 
-Таймаут в 20 секунд оставляет приложению время на graceful shutdown. Данные
-PostgreSQL сохраняются в volume `postgres_data`.
+Таймаут в 20 секунд оставляет приложениям время на graceful shutdown. Данные
+PostgreSQL сохраняются в отдельных volumes `postgres_data` и
+`auth_postgres_data`.
 
 ## Переменные окружения
 
@@ -183,13 +195,18 @@ PostgreSQL сохраняются в volume `postgres_data`.
 | `POSTGRES_PASSWORD` | да | — | Пароль PostgreSQL |
 | `POSTGRES_DB` | да | — | Имя базы данных |
 | `POSTGRES_HOST` | нет | `localhost` | Хост PostgreSQL; в Compose используется `db` |
+| `AUTH_POSTGRES_USER` | да | — | Пользователь PostgreSQL auth-сервиса |
+| `AUTH_POSTGRES_PASSWORD` | да | — | Пароль PostgreSQL auth-сервиса |
+| `AUTH_POSTGRES_DB` | да | — | Имя базы данных auth-сервиса |
+| `AUTH_POSTGRES_HOST` | нет | `localhost` | Хост PostgreSQL auth-сервиса; в Compose используется `auth_db` |
 | `REDIS_HOST` | нет | `localhost` | Хост Redis; в Compose используется `redis` |
 | `JWTKEY` | да | — | Секрет подписи JWT |
 | `LOG_LEVEL` | нет | `info` | `debug`, `info`, `warn` или `error` |
 | `LOG_FORMAT` | нет | `json` | `json` или `text` |
 
-Порты PostgreSQL, Redis и API сейчас заданы в конфигурации как `5432`,
-`6379` и `8080`.
+На хосте публикуется только порт `8080` публичного proxy. Внутри сети Compose
+API слушает порт `8080`, auth-сервис — `8081`, обе базы PostgreSQL — `5432`,
+Redis — `6379`.
 
 ## API
 
@@ -374,13 +391,16 @@ Gin остаётся HTTP-маршрутизатором и работает в�
 и Redis — локальные или запущенные в контейнерах.
 
 Если PostgreSQL и Redis уже доступны локально и переменные окружения настроены,
-API можно запустить без Compose:
+API можно запустить без Compose. Порты контейнеров PostgreSQL и Redis из Compose
+не опубликованы на хосте:
 
 ```bash
+cd blog
 go run ./cmd/blog
 ```
 
-Запустить тесты:
+Команды Go выполняются внутри папки нужного сервиса (`blog` или `auth`).
+Например, для блога:
 
 ```bash
 go test ./...
@@ -400,7 +420,7 @@ go tool cover -func=coverage.out
 go tool cover -html=coverage.out
 ```
 
-Текущий уровень покрытия — около 71%, минимальный порог CI — 70%.
+CI проверяет покрытие каждого сервиса отдельно; минимальный порог — 70%.
 
 Запустить статический анализ:
 
@@ -409,10 +429,9 @@ go vet ./...
 golangci-lint run
 ```
 
-Конфигурация golangci-lint находится в `.golangci.yml`; CI использует версию
-`v2.12.2`.
+В каждом сервисе своя `.golangci.yml`; CI использует версию `v2.12.2`.
 
-## CI и публикация Docker-образа
+## CI и публикация Docker-образов
 
 Workflow `.github/workflows/ci.yml` запускается:
 
@@ -421,14 +440,16 @@ Workflow `.github/workflows/ci.yml` запускается:
 - при push Git-тега вида `v*`;
 - вручную через `workflow_dispatch`.
 
-Jobs `Lint` и `Test and build` выполняются параллельно. Они проверяют
-форматирование, линтеры, race detector, покрытие, сборку приложения и Dockerfile.
+Для каждого сервиса jobs `Lint` и `Test and build` проверяют форматирование,
+линтеры, race detector, покрытие, сборку приложения и Dockerfile.
 
-После успешных проверок push в `main` публикует образ:
+После успешных проверок push в `main` публикует два образа:
 
 ```text
 ghcr.io/lya122221/blog-backend:latest
 ghcr.io/lya122221/blog-backend:sha-<COMMIT_SHA>
+ghcr.io/lya122221/blog-backend-auth:latest
+ghcr.io/lya122221/blog-backend-auth:sha-<COMMIT_SHA>
 ```
 
 Git-тег создаёт версионные Docker-теги:
@@ -441,6 +462,8 @@ git push origin v1.0.0
 ```text
 ghcr.io/lya122221/blog-backend:1.0.0
 ghcr.io/lya122221/blog-backend:1.0
+ghcr.io/lya122221/blog-backend-auth:1.0.0
+ghcr.io/lya122221/blog-backend-auth:1.0
 ```
 
 Скачать опубликованный образ:
@@ -449,5 +472,5 @@ ghcr.io/lya122221/blog-backend:1.0
 docker pull ghcr.io/lya122221/blog-backend:latest
 ```
 
-Workflow создаёт provenance-attestation для опубликованного образа. Автоматическое
-развёртывание образа на production-сервер пока не настроено.
+Workflow создаёт provenance-attestation для каждого опубликованного образа.
+Автоматическое развёртывание на production-сервер пока не настроено.
