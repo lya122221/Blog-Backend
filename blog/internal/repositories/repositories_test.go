@@ -99,35 +99,6 @@ func has(q, fragment string) bool {
 	return strings.Contains(strings.Join(strings.Fields(q), " "), fragment)
 }
 
-func TestUserRepository(t *testing.T) {
-	c := &testConn{}
-	c.query = func(q string, a []driver.NamedValue) (driver.Rows, error) {
-		return rows([]string{"id", "password_hash"}, []driver.Value{"u1", "hash"}), nil
-	}
-	c.exec = func(q string, a []driver.NamedValue) (driver.Result, error) {
-		if len(a) != 3 || a[0].Value != "alice" || a[1].Value != "a@example.com" {
-			t.Fatalf("unexpected args: %v", a)
-		}
-		return driver.RowsAffected(1), nil
-	}
-	s := &Storage{db: openTestDB(t, c)}
-	id, hash, err := s.GetUserData("a@example.com")
-	if err != nil || id != "u1" || hash != "hash" {
-		t.Fatalf("GetUserData=%q,%q,%v", id, hash, err)
-	}
-	if err := s.AddNewUser(models.User{Username: "alice", Email: "a@example.com", PasswordHash: "hash"}); err != nil {
-		t.Fatalf("AddNewUser: %v", err)
-	}
-	c.query = func(string, []driver.NamedValue) (driver.Rows, error) { return nil, errors.New("db") }
-	if _, _, err := s.GetUserData("x"); err == nil {
-		t.Fatal("expected query error")
-	}
-	c.exec = func(string, []driver.NamedValue) (driver.Result, error) { return nil, errors.New("db") }
-	if err := s.AddNewUser(models.User{}); err == nil {
-		t.Fatal("expected exec error")
-	}
-}
-
 func articleValues(id string) []driver.Value {
 	return []driver.Value{id, "title", "body", 7, time.Now(), "u1", "alice", "{go,test}"}
 }

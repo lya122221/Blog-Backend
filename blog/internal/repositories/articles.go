@@ -27,8 +27,8 @@ func (s *Storage) GetArticlesWithoutTags(limit int, offset int) (*sql.Rows, erro
 			COALESCE((
 				SELECT array_agg(tags.name)
 				FROM article_tags at
-				JOIN tags 
-				  ON tags.id = at.tag_id
+				JOIN tags
+					ON tags.id = at.tag_id
 				WHERE at.article_id = articles.id
 			), '{}') AS all_tags
 		FROM articles
@@ -50,8 +50,8 @@ func (s *Storage) GetArticlesWithTags(limit int, offset int, tags []string) (*sq
 			COALESCE((
 				SELECT array_agg(tags.name)
 				FROM article_tags at
-				JOIN tags 
-				  ON tags.id = at.tag_id
+				JOIN tags
+					ON tags.id = at.tag_id
 				WHERE at.article_id = articles.id
 			), '{}') AS all_tags
 		FROM articles
@@ -182,7 +182,7 @@ func (s *Storage) GetArticleWithID(articleID uuid.UUID) (*models.Article, error)
 			COALESCE((
 				SELECT array_agg(t.name)
 				FROM article_tags at
-				INNER JOIN tags t 
+				JOIN tags t
 					ON t.id = at.tag_id
 				WHERE at.article_id = articles.id
 			), '{}')

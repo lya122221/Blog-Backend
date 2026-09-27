@@ -12,6 +12,15 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+func signedToken(t *testing.T, method jwt.SigningMethod, claims jwt.Claims, key any) string {
+	t.Helper()
+	token, err := jwt.NewWithClaims(method, claims).SignedString(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return token
+}
+
 func TestAuthMiddleware(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	seed := make([]byte, ed25519.SeedSize)

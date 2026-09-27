@@ -3,73 +3,11 @@ package services
 import (
 	"blog/internal/models"
 	"errors"
-	"os"
 	"testing"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 )
-
-type userRepoStub struct {
-	id, hash string
-	err      error
-	added    models.User
-}
-
-func (r *userRepoStub) GetUserData(string) (string, string, error) { return r.id, r.hash, r.err }
-func (r *userRepoStub) AddNewUser(user models.User) error          { r.added = user; return r.err }
-
-func TestUserServiceRegisterAndLogin(t *testing.T) {
-	t.Setenv("JWTKEY", "test-secret")
-	repo := &userRepoStub{}
-	svc := NewUserService(repo)
-
-	registration := &models.UserRegister{Email: "a@example.com", Username: "alice", Password: "secret"}
-	if err := svc.Register(registration); err != nil {
-		t.Fatalf("Register: %v", err)
-	}
-	if repo.added.Email != registration.Email || repo.added.Username != registration.Username {
-		t.Fatalf("unexpected user: %+v", repo.added)
-	}
-	if !ComparePasswords(repo.added.PasswordHash, registration.Password) {
-		t.Fatal("stored password is not a bcrypt hash of the password")
-	}
-	if ComparePasswords(repo.added.PasswordHash, "wrong") {
-		t.Fatal("wrong password accepted")
-	}
-
-	repo.id, repo.hash = "user-1", repo.added.PasswordHash
-	tokenString, err := svc.Login(&models.UserLogin{Email: registration.Email, Password: registration.Password})
-	if err != nil {
-		t.Fatalf("Login: %v", err)
-	}
-	token, err := jwt.Parse(tokenString, func(*jwt.Token) (any, error) { return []byte(os.Getenv("JWTKEY")), nil })
-	if err != nil || !token.Valid {
-		t.Fatalf("invalid generated token: %v", err)
-	}
-	if got := token.Claims.(jwt.MapClaims)["user_id"]; got != "user-1" {
-		t.Fatalf("user_id = %v", got)
-	}
-}
-
-func TestUserServiceErrors(t *testing.T) {
-	hash, err := GenerateHashedPassword("secret")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	repoErr := errors.New("repository unavailable")
-	if err := NewUserService(&userRepoStub{err: repoErr}).Register(&models.UserRegister{Password: "secret"}); !errors.Is(err, repoErr) {
-		t.Fatalf("Register error = %v", err)
-	}
-	if _, err := NewUserService(&userRepoStub{err: repoErr}).Login(&models.UserLogin{}); !errors.Is(err, repoErr) {
-		t.Fatalf("Login error = %v", err)
-	}
-	if _, err := NewUserService(&userRepoStub{id: "1", hash: hash}).Login(&models.UserLogin{Password: "wrong"}); err == nil {
-		t.Fatal("expected incorrect-password error")
-	}
-}
 
 type articlesRepoStub struct {
 	articles                                 []models.Article

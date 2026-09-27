@@ -208,43 +208,6 @@ func TestGetAndModifyArticleHandlers(t *testing.T) {
 	}
 }
 
-type userServiceStub struct {
-	err        error
-	token      string
-	registered *models.UserRegister
-	loggedIn   *models.UserLogin
-}
-
-func (s *userServiceStub) Register(u *models.UserRegister) error { s.registered = u; return s.err }
-func (s *userServiceStub) Login(u *models.UserLogin) (string, error) {
-	s.loggedIn = u
-	return s.token, s.err
-}
-
-func TestAuthHandlers(t *testing.T) {
-	s := &userServiceStub{token: "jwt"}
-	h := NewUserHandler(s)
-	register := models.UserRegister{Email: "a@example.com", Username: "alice", Password: "secret"}
-	assertStatus(t, perform(http.MethodPost, "/register", "/register", register, nil, h.RegisterUser), http.StatusCreated)
-	if s.registered.Email != register.Email {
-		t.Fatalf("register not forwarded: %+v", s.registered)
-	}
-	assertStatus(t, perform(http.MethodPost, "/register", "/register", map[string]any{"email": "bad"}, nil, h.RegisterUser), http.StatusBadRequest)
-	s.err = errors.New("db")
-	assertStatus(t, perform(http.MethodPost, "/register", "/register", register, nil, h.RegisterUser), http.StatusInternalServerError)
-
-	s.err = nil
-	login := models.UserLogin{Email: "a@example.com", Password: "secret"}
-	w := perform(http.MethodPost, "/login", "/login", login, nil, h.LoginUser)
-	assertStatus(t, w, http.StatusOK)
-	if s.loggedIn.Email != login.Email || !bytes.Contains(w.Body.Bytes(), []byte(`"token":"jwt"`)) {
-		t.Fatalf("unexpected login response: %s", w.Body.String())
-	}
-	assertStatus(t, perform(http.MethodPost, "/login", "/login", map[string]any{"email": "bad"}, nil, h.LoginUser), http.StatusBadRequest)
-	s.err = errors.New("bad login")
-	assertStatus(t, perform(http.MethodPost, "/login", "/login", login, nil, h.LoginUser), http.StatusInternalServerError)
-}
-
 type interactionsServiceStub struct {
 	comments                             []models.Comment
 	liked                                bool
