@@ -97,7 +97,7 @@ func run() (runErr error) {
 			articles.GET("/:id/comments", interactionsHandler.GetCommentsHandler)
 
 			// private
-			articles.Use(middleware.AuthMiddleware())
+			articles.Use(middleware.HS256AuthMiddleware())
 			articles.POST("/", articlesHandler.CreateArticlesHandler)
 			articles.PUT("/:id", articlesHandler.UpdateArticleHandler)
 			articles.DELETE("/:id", articlesHandler.DeleteArticleHandler)

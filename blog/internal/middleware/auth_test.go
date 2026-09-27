@@ -22,7 +22,7 @@ func signedToken(t *testing.T, method jwt.SigningMethod, claims jwt.MapClaims, k
 func authRequest(header string) *httptest.ResponseRecorder {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.GET("/private", AuthMiddleware(), func(c *gin.Context) { value, _ := c.Get("userID"); c.JSON(http.StatusOK, gin.H{"user_id": value}) })
+	r.GET("/private", HS256AuthMiddleware(), func(c *gin.Context) { value, _ := c.Get("userID"); c.JSON(http.StatusOK, gin.H{"user_id": value}) })
 	req := httptest.NewRequest(http.MethodGet, "/private", nil)
 	if header != "" {
 		req.Header.Set("Authorization", header)
@@ -32,7 +32,7 @@ func authRequest(header string) *httptest.ResponseRecorder {
 	return w
 }
 
-func TestAuthMiddleware(t *testing.T) {
+func TestHS256AuthMiddleware(t *testing.T) {
 	t.Setenv("JWTKEY", "secret")
 	valid := signedToken(t, jwt.SigningMethodHS256, jwt.MapClaims{"user_id": "u1", "exp": time.Now().Add(time.Hour).Unix()}, []byte("secret"))
 	tests := []struct {
