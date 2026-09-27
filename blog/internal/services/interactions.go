@@ -2,8 +2,7 @@ package services
 
 import (
 	"blog/internal/models"
-
-	"github.com/google/uuid"
+	"uuid"
 )
 
 type InteractionsRepository interface {

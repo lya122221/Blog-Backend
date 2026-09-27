@@ -3,8 +3,7 @@ package repositories
 import (
 	"blog/internal/models"
 	"errors"
-
-	"github.com/google/uuid"
+	"uuid"
 )
 
 func (s *Storage) GetComments(articleID uuid.UUID) ([]models.Comment, error) {

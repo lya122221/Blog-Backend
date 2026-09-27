@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/lib/pq"
 	"github.com/redis/go-redis/v9"
 )

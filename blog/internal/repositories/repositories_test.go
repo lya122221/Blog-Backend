@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"blog/internal/models"
+	"bytes"
 	"context"
 	"database/sql"
 	"database/sql/driver"
@@ -12,9 +13,21 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+func TestUUIDPgxEncoding(t *testing.T) {
+	id := uuid.NewV4()
+	encoded, err := pgtype.NewMap().Encode(pgtype.UUIDOID, pgtype.BinaryFormatCode, id, nil)
+	if err != nil {
+		t.Fatalf("encode UUID: %v", err)
+	}
+	if !bytes.Equal(encoded, id[:]) {
+		t.Fatalf("encoded UUID does not match original: %x", encoded)
+	}
+}
 
 type testDriver struct{ conn *testConn }
 
@@ -137,7 +150,7 @@ func TestArticleReadRepository(t *testing.T) {
 	if err != nil || len(got) != 1 || got[0].ID != "a2" {
 		t.Fatalf("tagged articles=%+v err=%v", got, err)
 	}
-	id := uuid.New()
+	id := uuid.NewV4()
 	article, err := s.GetArticleWithID(id)
 	if err != nil || article.Author.Username != "alice" || article.Author.ID != "u1" {
 		t.Fatalf("article=%+v err=%v", article, err)
@@ -178,7 +191,7 @@ func TestArticleWriteRepository(t *testing.T) {
 	if err := s.CreateArticle("author-1", "alice", "title", "body", []string{"go", "test"}); err != nil {
 		t.Fatalf("CreateArticle: %v", err)
 	}
-	id := uuid.New()
+	id := uuid.NewV4()
 	request := models.UpdateArticleRequest{Title: "new", Content: "new body", Tags: []string{"go"}}
 	if err := s.UpdateArticle("author-1", id, request); err != nil {
 		t.Fatalf("UpdateArticle: %v", err)
@@ -248,7 +261,7 @@ func TestInteractionsRepository(t *testing.T) {
 		return driver.RowsAffected(1), nil
 	}
 	s := &Storage{db: openTestDB(t, c)}
-	id := uuid.New()
+	id := uuid.NewV4()
 	comments, err := s.GetComments(id)
 	if err != nil || len(comments) != 1 || comments[0].Content != "hello" || comments[0].Author.ID != "u1" || comments[0].Author.Username != "alice" {
 		t.Fatalf("comments=%+v err=%v", comments, err)
@@ -282,7 +295,7 @@ func TestInteractionsRepository(t *testing.T) {
 func TestCreateCommentWithoutAuthorUsername(t *testing.T) {
 	c := &testConn{}
 	s := &Storage{db: openTestDB(t, c)}
-	if err := s.CreateComment(uuid.New(), "author-1", "", "hello"); err == nil {
+	if err := s.CreateComment(uuid.NewV4(), "author-1", "", "hello"); err == nil {
 		t.Fatal("expected missing username error")
 	}
 }

@@ -1,14 +1,15 @@
 package middleware
 
 import (
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
 	"time"
+	"uuid"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 )
 
 const (
@@ -21,7 +22,7 @@ func RequestLogger(logger *slog.Logger) gin.HandlerFunc {
 		startedAt := time.Now()
 		requestID := c.GetHeader(requestIDHeader)
 		if requestID == "" || len(requestID) > 128 {
-			requestID = uuid.NewString()
+			requestID = fmt.Sprint(uuid.NewV4())
 		}
 
 		c.Set(requestIDKey, requestID)

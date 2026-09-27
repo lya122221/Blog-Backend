@@ -5,8 +5,7 @@ import (
 	"context"
 	"log/slog"
 	"time"
-
-	"github.com/google/uuid"
+	"uuid"
 )
 
 func updateViews(s *repositories.Storage) error {

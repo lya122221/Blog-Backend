@@ -3,10 +3,10 @@ package services
 import (
 	"blog/internal/models"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
-
-	"github.com/google/uuid"
+	"uuid"
 )
 
 type articlesRepoStub struct {
@@ -49,8 +49,9 @@ func (r *articlesRepoStub) IncrementViewsCount(id uuid.UUID) error {
 }
 
 func TestArticlesService(t *testing.T) {
-	id := uuid.New()
-	repo := &articlesRepoStub{articles: []models.Article{{ID: id.String()}}, article: &models.Article{ID: id.String()}, incremented: make(chan uuid.UUID, 1)}
+	id := uuid.NewV4()
+	idStr := fmt.Sprint(id)
+	repo := &articlesRepoStub{articles: []models.Article{{ID: idStr}}, article: &models.Article{ID: idStr}, incremented: make(chan uuid.UUID, 1)}
 	svc := NewArticlesService(repo)
 
 	articles, err := svc.GetArticles(3, 10, []string{"go"})
@@ -61,8 +62,8 @@ func TestArticlesService(t *testing.T) {
 	if err := svc.CreateArticle(a); err != nil || repo.authorID != "author" || repo.authorUsername != "alice" || repo.title != "title" {
 		t.Fatalf("CreateArticle call not forwarded: %v %+v", err, repo)
 	}
-	got, err := svc.GetArticleWithID(id.String())
-	if err != nil || got.ID != id.String() {
+	got, err := svc.GetArticleWithID(idStr)
+	if err != nil || got.ID != idStr {
 		t.Fatalf("GetArticleWithID = %+v, %v", got, err)
 	}
 	select {
@@ -74,16 +75,17 @@ func TestArticlesService(t *testing.T) {
 		t.Fatal("view increment was not started")
 	}
 	req := models.UpdateArticleRequest{Title: "new", Content: "new body", Tags: []string{"test"}}
-	if err := svc.UpdateArticle("author", id.String(), req); err != nil || repo.request.Title != "new" {
+	if err := svc.UpdateArticle("author", idStr, req); err != nil || repo.request.Title != "new" {
 		t.Fatalf("UpdateArticle: %v", err)
 	}
-	if err := svc.DeleteArticle("author", id.String()); err != nil || repo.articleID != id {
+	if err := svc.DeleteArticle("author", idStr); err != nil || repo.articleID != id {
 		t.Fatalf("DeleteArticle: %v", err)
 	}
 }
 
 func TestArticlesServiceErrors(t *testing.T) {
 	repoErr := errors.New("repo error")
+	validID := "550e8400-e29b-41d4-a716-446655440000"
 	svc := NewArticlesService(&articlesRepoStub{err: repoErr})
 	if _, err := svc.GetArticles(1, 20, nil); !errors.Is(err, repoErr) {
 		t.Fatalf("GetArticles error=%v", err)
@@ -94,19 +96,19 @@ func TestArticlesServiceErrors(t *testing.T) {
 	if _, err := svc.GetArticleWithID("bad"); err == nil {
 		t.Fatal("expected UUID parse error")
 	}
-	if _, err := svc.GetArticleWithID(uuid.NewString()); !errors.Is(err, repoErr) {
+	if _, err := svc.GetArticleWithID(validID); !errors.Is(err, repoErr) {
 		t.Fatalf("GetArticle error=%v", err)
 	}
 	if err := svc.UpdateArticle("a", "bad", models.UpdateArticleRequest{}); err == nil {
 		t.Fatal("expected UUID parse error")
 	}
-	if err := svc.UpdateArticle("a", uuid.NewString(), models.UpdateArticleRequest{}); !errors.Is(err, repoErr) {
+	if err := svc.UpdateArticle("a", validID, models.UpdateArticleRequest{}); !errors.Is(err, repoErr) {
 		t.Fatalf("Update error=%v", err)
 	}
 	if err := svc.DeleteArticle("a", "bad"); err == nil {
 		t.Fatal("expected UUID parse error")
 	}
-	if err := svc.DeleteArticle("a", uuid.NewString()); !errors.Is(err, repoErr) {
+	if err := svc.DeleteArticle("a", validID); !errors.Is(err, repoErr) {
 		t.Fatalf("Delete error=%v", err)
 	}
 }
@@ -134,17 +136,18 @@ func (r *interactionsRepoStub) ToggleLike(id uuid.UUID, userID string) (bool, in
 }
 
 func TestInteractionsService(t *testing.T) {
-	id := uuid.New()
+	id := uuid.NewV4()
+	idStr := fmt.Sprint(id)
 	repo := &interactionsRepoStub{comments: []models.Comment{{ID: "c1"}}, liked: true, count: 2}
 	svc := NewInteractionsService(repo)
-	comments, err := svc.GetComments(id.String())
+	comments, err := svc.GetComments(idStr)
 	if err != nil || len(comments) != 1 {
 		t.Fatalf("GetComments=%+v,%v", comments, err)
 	}
-	if err := svc.CreateComment(id.String(), "u1", "alice", "hello"); err != nil || repo.content != "hello" || repo.username != "alice" {
+	if err := svc.CreateComment(idStr, "u1", "alice", "hello"); err != nil || repo.content != "hello" || repo.username != "alice" {
 		t.Fatalf("CreateComment=%v", err)
 	}
-	liked, count, err := svc.ToggleLike(id.String(), "u1")
+	liked, count, err := svc.ToggleLike(idStr, "u1")
 	if err != nil || !liked || count != 2 {
 		t.Fatalf("ToggleLike=%v,%d,%v", liked, count, err)
 	}
@@ -153,19 +156,19 @@ func TestInteractionsService(t *testing.T) {
 	if _, err := svc.GetComments("bad"); err == nil {
 		t.Fatal("expected parse error")
 	}
-	if _, err := svc.GetComments(id.String()); err == nil {
+	if _, err := svc.GetComments(idStr); err == nil {
 		t.Fatal("expected repository error")
 	}
 	if err := svc.CreateComment("bad", "", "", ""); err == nil {
 		t.Fatal("expected parse error")
 	}
-	if err := svc.CreateComment(id.String(), "", "", ""); err == nil {
+	if err := svc.CreateComment(idStr, "", "", ""); err == nil {
 		t.Fatal("expected repository error")
 	}
 	if _, _, err := svc.ToggleLike("bad", ""); err == nil {
 		t.Fatal("expected parse error")
 	}
-	if _, _, err := svc.ToggleLike(id.String(), ""); err == nil {
+	if _, _, err := svc.ToggleLike(idStr, ""); err == nil {
 		t.Fatal("expected repository error")
 	}
 }
