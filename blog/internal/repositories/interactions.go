@@ -11,12 +11,12 @@ func (s *Storage) GetComments(articleID uuid.UUID) ([]models.Comment, error) {
 		SELECT 
 			comments.id,
 			comments.article_id,
-			users.id AS author_id,
-			users.username AS author_username,
+			comments.user_id AS author_id,
+			COALESCE(comments.author_username, users.username) AS author_username,
 			comments.content,
 			comments.created_at
 		FROM comments
-		INNER JOIN users 
+		LEFT JOIN users
 			ON comments.user_id = users.id
 		WHERE comments.article_id = $1
 		ORDER BY comments.created_at ASC, comments.id ASC

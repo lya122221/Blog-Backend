@@ -257,7 +257,7 @@ func TestInteractionsRepository(t *testing.T) {
 	s := &Storage{db: openTestDB(t, c)}
 	id := uuid.New()
 	comments, err := s.GetComments(id)
-	if err != nil || len(comments) != 1 || comments[0].Content != "hello" {
+	if err != nil || len(comments) != 1 || comments[0].Content != "hello" || comments[0].Author.ID != "u1" || comments[0].Author.Username != "alice" {
 		t.Fatalf("comments=%+v err=%v", comments, err)
 	}
 	if err := s.CreateComment(id, "u1", "hello"); err != nil {
