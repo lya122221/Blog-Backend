@@ -174,20 +174,20 @@ func TestArticlesServiceErrors(t *testing.T) {
 }
 
 type interactionsRepoStub struct {
-	comments        []models.Comment
-	liked           bool
-	count           int
-	err             error
-	articleID       uuid.UUID
-	userID, content string
+	comments                  []models.Comment
+	liked                     bool
+	count                     int
+	err                       error
+	articleID                 uuid.UUID
+	userID, username, content string
 }
 
 func (r *interactionsRepoStub) GetComments(id uuid.UUID) ([]models.Comment, error) {
 	r.articleID = id
 	return r.comments, r.err
 }
-func (r *interactionsRepoStub) CreateComment(id uuid.UUID, userID, content string) error {
-	r.articleID, r.userID, r.content = id, userID, content
+func (r *interactionsRepoStub) CreateComment(id uuid.UUID, userID, username, content string) error {
+	r.articleID, r.userID, r.username, r.content = id, userID, username, content
 	return r.err
 }
 func (r *interactionsRepoStub) ToggleLike(id uuid.UUID, userID string) (bool, int, error) {
@@ -203,7 +203,7 @@ func TestInteractionsService(t *testing.T) {
 	if err != nil || len(comments) != 1 {
 		t.Fatalf("GetComments=%+v,%v", comments, err)
 	}
-	if err := svc.CreateComment(id.String(), "u1", "hello"); err != nil || repo.content != "hello" {
+	if err := svc.CreateComment(id.String(), "u1", "alice", "hello"); err != nil || repo.content != "hello" || repo.username != "alice" {
 		t.Fatalf("CreateComment=%v", err)
 	}
 	liked, count, err := svc.ToggleLike(id.String(), "u1")
@@ -218,10 +218,10 @@ func TestInteractionsService(t *testing.T) {
 	if _, err := svc.GetComments(id.String()); err == nil {
 		t.Fatal("expected repository error")
 	}
-	if err := svc.CreateComment("bad", "", ""); err == nil {
+	if err := svc.CreateComment("bad", "", "", ""); err == nil {
 		t.Fatal("expected parse error")
 	}
-	if err := svc.CreateComment(id.String(), "", ""); err == nil {
+	if err := svc.CreateComment(id.String(), "", "", ""); err == nil {
 		t.Fatal("expected repository error")
 	}
 	if _, _, err := svc.ToggleLike("bad", ""); err == nil {

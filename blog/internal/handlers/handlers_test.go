@@ -246,19 +246,19 @@ func TestAuthHandlers(t *testing.T) {
 }
 
 type interactionsServiceStub struct {
-	comments                   []models.Comment
-	liked                      bool
-	count                      int
-	err                        error
-	articleID, userID, content string
+	comments                             []models.Comment
+	liked                                bool
+	count                                int
+	err                                  error
+	articleID, userID, username, content string
 }
 
 func (s *interactionsServiceStub) GetComments(id string) ([]models.Comment, error) {
 	s.articleID = id
 	return s.comments, s.err
 }
-func (s *interactionsServiceStub) CreateComment(id, user, content string) error {
-	s.articleID, s.userID, s.content = id, user, content
+func (s *interactionsServiceStub) CreateComment(id, userID, username, content string) error {
+	s.articleID, s.userID, s.username, s.content = id, userID, username, content
 	return s.err
 }
 func (s *interactionsServiceStub) ToggleLike(id, user string) (bool, int, error) {
@@ -276,8 +276,26 @@ func TestInteractionsHandlers(t *testing.T) {
 	s.err = nil
 	body := models.CreateCommentRequest{Content: "hello"}
 	assertStatus(t, perform(http.MethodPost, "/articles/a1/comments", "/articles/:id/comments", body, "u1", h.CreateCommentHandler), 201)
-	if s.content != "hello" || s.userID != "u1" {
+	if s.content != "hello" || s.userID != "u1" || s.username != "" {
 		t.Fatalf("comment not forwarded: %+v", s)
+	}
+	r := gin.New()
+	r.POST("/articles/:id/comments", func(c *gin.Context) {
+		c.Set("userID", "u2")
+		c.Set("username", "alice")
+		h.CreateCommentHandler(c)
+	})
+	data, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/articles/a1/comments", bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	assertStatus(t, w, http.StatusCreated)
+	if s.articleID != "a1" || s.userID != "u2" || s.username != "alice" || s.content != "hello" {
+		t.Fatalf("comment author not forwarded: %+v", s)
 	}
 	for _, tc := range []struct {
 		name string

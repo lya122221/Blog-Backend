@@ -9,7 +9,7 @@ import (
 
 type InteractionsService interface {
 	GetComments(articleIDStr string) ([]models.Comment, error)
-	CreateComment(articleIDStr string, userID string, content string) error
+	CreateComment(articleIDStr string, authorID string, authorUsername string, content string) error
 	ToggleLike(articleIDStr string, userID string) (bool, int, error)
 }
 
@@ -53,7 +53,7 @@ func (h *InteractionsHandler) CreateCommentHandler(c *gin.Context) {
 		return
 	}
 
-	err := h.service.CreateComment(articleID, authorID, request.Content)
+	err := h.service.CreateComment(articleID, authorID, c.GetString("username"), request.Content)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create comment"})
 		return

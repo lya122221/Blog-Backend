@@ -55,11 +55,22 @@ func (s *Storage) GetComments(articleID uuid.UUID) ([]models.Comment, error) {
 	return comments, nil
 }
 
-func (s *Storage) CreateComment(articleID uuid.UUID, userID string, content string) error {
+func (s *Storage) CreateComment(articleID uuid.UUID, authorID string, authorUsername string, content string) error {
+	if authorUsername == "" {
+		err := s.db.QueryRow(`
+			SELECT username
+			FROM users
+			WHERE id = $1
+		`, authorID).Scan(&authorUsername)
+		if err != nil {
+			return err
+		}
+	}
+
 	_, err := s.db.Exec(`
-		INSERT INTO comments (article_id, user_id, content)
-		VALUES ($1, $2, $3)
-	`, articleID, userID, content)
+		INSERT INTO comments (article_id, user_id, author_username, content)
+		VALUES ($1, $2, $3, $4)
+	`, articleID, authorID, authorUsername, content)
 
 	return err
 }

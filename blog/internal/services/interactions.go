@@ -8,7 +8,7 @@ import (
 
 type InteractionsRepository interface {
 	GetComments(articleID uuid.UUID) ([]models.Comment, error)
-	CreateComment(articleID uuid.UUID, userID string, content string) error
+	CreateComment(articleID uuid.UUID, authorID string, authorUsername string, content string) error
 	ToggleLike(articleID uuid.UUID, userID string) (bool, int, error)
 }
 
@@ -34,13 +34,13 @@ func (s *InteractionsService) GetComments(articleIDStr string) ([]models.Comment
 	return comments, nil
 }
 
-func (s *InteractionsService) CreateComment(articleIDStr string, userID string, content string) error {
+func (s *InteractionsService) CreateComment(articleIDStr string, authorID string, authorUsername string, content string) error {
 	articleID, err := uuid.Parse(articleIDStr)
 	if err != nil {
 		return err
 	}
 
-	return s.repo.CreateComment(articleID, userID, content)
+	return s.repo.CreateComment(articleID, authorID, authorUsername, content)
 }
 
 func (s *InteractionsService) ToggleLike(articleIDStr string, userID string) (bool, int, error) {

@@ -270,12 +270,20 @@ func TestInteractionsRepository(t *testing.T) {
 	c := &testConn{}
 	likedRows := int64(0)
 	c.query = func(q string, a []driver.NamedValue) (driver.Rows, error) {
+		if has(q, "SELECT username FROM users") {
+			t.Fatal("unexpected local user lookup for JWT with username")
+		}
 		if has(q, "SELECT COUNT(*)") {
 			return rows([]string{"count"}, []driver.Value{int64(3)}), nil
 		}
 		return rows([]string{"id", "article_id", "author_id", "username", "content", "created"}, []driver.Value{"c1", "a1", "u1", "alice", "hello", time.Now()}), nil
 	}
 	c.exec = func(q string, a []driver.NamedValue) (driver.Result, error) {
+		if has(q, "INSERT INTO comments") {
+			if len(a) != 4 || a[1].Value != "u1" || a[2].Value != "alice" || a[3].Value != "hello" {
+				t.Fatalf("unexpected comment insert args: %+v", a)
+			}
+		}
 		if has(q, "DELETE FROM likes") {
 			return driver.RowsAffected(likedRows), nil
 		}
@@ -287,7 +295,7 @@ func TestInteractionsRepository(t *testing.T) {
 	if err != nil || len(comments) != 1 || comments[0].Content != "hello" || comments[0].Author.ID != "u1" || comments[0].Author.Username != "alice" {
 		t.Fatalf("comments=%+v err=%v", comments, err)
 	}
-	if err := s.CreateComment(id, "u1", "hello"); err != nil {
+	if err := s.CreateComment(id, "u1", "alice", "hello"); err != nil {
 		t.Fatalf("CreateComment: %v", err)
 	}
 	liked, count, err := s.ToggleLike(id, "u1")
@@ -305,10 +313,40 @@ func TestInteractionsRepository(t *testing.T) {
 		t.Fatal("expected comments error")
 	}
 	c.exec = func(string, []driver.NamedValue) (driver.Result, error) { return nil, errors.New("exec") }
-	if err := s.CreateComment(id, "u", "x"); err == nil {
+	if err := s.CreateComment(id, "u", "alice", "x"); err == nil {
 		t.Fatal("expected comment error")
 	}
 	if _, _, err := s.ToggleLike(id, "u"); err == nil {
 		t.Fatal("expected toggle error")
+	}
+}
+
+func TestCreateCommentWithoutAuthorUsername(t *testing.T) {
+	c := &testConn{}
+	c.query = func(q string, a []driver.NamedValue) (driver.Rows, error) {
+		if !has(q, "SELECT username FROM users") || len(a) != 1 || a[0].Value != "u1" {
+			t.Fatalf("unexpected query: %s %+v", q, a)
+		}
+		return rows([]string{"username"}, []driver.Value{"alice"}), nil
+	}
+	c.exec = func(q string, a []driver.NamedValue) (driver.Result, error) {
+		if !has(q, "INSERT INTO comments (article_id, user_id, author_username, content)") || len(a) != 4 || a[1].Value != "u1" || a[2].Value != "alice" || a[3].Value != "hello" {
+			t.Fatalf("unexpected comment insert: %s %+v", q, a)
+		}
+		return driver.RowsAffected(1), nil
+	}
+	s := &Storage{db: openTestDB(t, c)}
+	if err := s.CreateComment(uuid.New(), "u1", "", "hello"); err != nil {
+		t.Fatalf("legacy comment: %v", err)
+	}
+
+	c.query = func(q string, _ []driver.NamedValue) (driver.Rows, error) {
+		if !has(q, "SELECT username FROM users") {
+			t.Fatalf("unexpected query: %s", q)
+		}
+		return rows([]string{"username"}), nil
+	}
+	if err := s.CreateComment(uuid.New(), "missing", "", "hello"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("missing legacy user error: %v", err)
 	}
 }
