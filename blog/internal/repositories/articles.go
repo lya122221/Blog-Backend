@@ -22,8 +22,8 @@ func (s *Storage) GetArticlesWithoutTags(limit int, offset int) (*sql.Rows, erro
 			articles.content,
 			articles.views_count,
 			articles.created_at,
-			users.id AS author_id,
-			users.username AS author_username,
+			articles.author_id,
+			COALESCE(articles.author_username, users.username) AS author_username,
 			COALESCE((
         SELECT array_agg(tags.name)
         FROM article_tags at
@@ -32,7 +32,7 @@ func (s *Storage) GetArticlesWithoutTags(limit int, offset int) (*sql.Rows, erro
         WHERE at.article_id = articles.id
     	), '{}') AS all_tags
 		FROM articles
-		INNER JOIN users 
+		LEFT JOIN users
 			ON articles.author_id = users.id 
 		ORDER BY articles.created_at DESC, articles.id DESC
 		LIMIT $1 OFFSET $2
@@ -47,8 +47,8 @@ func (s *Storage) GetArticlesWithTags(limit int, offset int, tags []string) (*sq
 			articles.content,
 			articles.views_count,
 			articles.created_at,
-			users.id AS author_id,
-			users.username AS author_username,
+			articles.author_id,
+			COALESCE(articles.author_username, users.username) AS author_username,
 			COALESCE((
         SELECT array_agg(tags.name)
         FROM article_tags at
@@ -57,7 +57,7 @@ func (s *Storage) GetArticlesWithTags(limit int, offset int, tags []string) (*sq
         WHERE at.article_id = articles.id
     	), '{}') AS all_tags
 		FROM articles
-		INNER JOIN users
+		LEFT JOIN users
 			ON articles.author_id = users.id 
 		INNER JOIN article_tags
 			ON article_tags.article_id = articles.id
@@ -173,15 +173,12 @@ func (s *Storage) GetArticleWithID(articleID uuid.UUID) (*models.Article, error)
 
 	err := s.db.QueryRow(`
 		SELECT 
-			id,
-			title,
-			content,
-			views_count,
-			created_at,
-			(SELECT username 
-				FROM users 
-				WHERE id = articles.author_id
-			),
+			articles.id,
+			articles.title,
+			articles.content,
+			articles.views_count,
+			articles.created_at,
+			COALESCE(articles.author_username, users.username),
 			articles.author_id,
 			COALESCE((
 				SELECT array_agg(t.name)
@@ -191,7 +188,9 @@ func (s *Storage) GetArticleWithID(articleID uuid.UUID) (*models.Article, error)
 				WHERE at.article_id = articles.id
 			), '{}')
 		FROM articles
-		WHERE id = $1
+		LEFT JOIN users
+			ON articles.author_id = users.id
+		WHERE articles.id = $1
 	`, articleID).Scan(
 		&article.ID,
 		&article.Title,

@@ -146,7 +146,7 @@ func TestArticleReadRepository(t *testing.T) {
 				t.Fatalf("plain args=%v", a)
 			}
 			return rows([]string{"id", "title", "content", "views", "created", "author_id", "username", "tags"}, articleValues("a1")), nil
-		case has(q, "WHERE id = $1"):
+		case has(q, "WHERE articles.id = $1"):
 			v := articleValues("a1")
 			v[5], v[6] = v[6], v[5]
 			return rows([]string{"id", "title", "content", "views", "created", "username", "author_id", "tags"}, v), nil
