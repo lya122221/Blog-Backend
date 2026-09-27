@@ -1,14 +1,18 @@
 package workers
 
 import (
-	"blog/internal/repositories"
 	"context"
 	"log/slog"
 	"time"
 	"uuid"
 )
 
-func updateViews(s *repositories.Storage) error {
+type ViewsRepository interface {
+	GetAndClearViewsCount() (map[string]int, error)
+	UpdateArticleViews(viewsCount int, articleID uuid.UUID) error
+}
+
+func updateViews(s ViewsRepository) error {
 	viewsToUpdate, err := s.GetAndClearViewsCount()
 
 	if err != nil {
@@ -30,7 +34,7 @@ func updateViews(s *repositories.Storage) error {
 	return nil
 }
 
-func StartViewsUpdaterWorker(ctx context.Context, s *repositories.Storage) error {
+func StartViewsUpdaterWorker(ctx context.Context, s ViewsRepository) error {
 	ticker := time.NewTicker(3 * time.Minute)
 	defer ticker.Stop()
 

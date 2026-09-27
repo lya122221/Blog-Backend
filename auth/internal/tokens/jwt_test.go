@@ -33,8 +33,9 @@ func TestGenerateToken(t *testing.T) {
 	if claims.UserID != "user-123" || claims.Username != "alice" || claims.Subject != "user-123" {
 		t.Fatalf("invalid claims: %+v", claims)
 	}
-	if claims.ExpiresAt.Time.Sub(claims.IssuedAt.Time) != 24*time.Hour {
-		t.Fatalf("unexpected token lifetime: %v", claims.ExpiresAt.Time.Sub(claims.IssuedAt.Time))
+	lifetime := claims.ExpiresAt.Sub(claims.IssuedAt.Time)
+	if lifetime != 24*time.Hour {
+		t.Fatalf("unexpected token lifetime: %v", lifetime)
 	}
 }
 

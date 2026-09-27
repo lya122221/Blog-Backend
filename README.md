@@ -554,13 +554,14 @@ golangci-lint run
 
 Workflow `.github/workflows/ci.yml` запускается:
 
-- при push в `main`;
+- при push в любую ветку;
 - для pull request в `main`;
 - при push Git-тега вида `v*`;
 - вручную через `workflow_dispatch`.
 
 Для каждого сервиса jobs `Lint` и `Test and build` проверяют форматирование,
 линтеры, race detector, покрытие, сборку приложения и Dockerfile.
+Push в рабочую ветку запускает только эти проверки.
 
 После успешных проверок push в `main` публикует два образа:
 
