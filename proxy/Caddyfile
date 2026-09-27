@@ -1,0 +1,9 @@
+:8080 {
+	handle /api/v1/auth/* {
+		reverse_proxy auth:8081
+	}
+
+	handle {
+		reverse_proxy api:8080
+	}
+}

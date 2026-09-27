@@ -2,21 +2,21 @@
 
 [![CI](https://github.com/lya122221/Blog-Backend/actions/workflows/ci.yml/badge.svg)](https://github.com/lya122221/Blog-Backend/actions/workflows/ci.yml)
 
-REST API для IT-блога на Go. Приложение поддерживает регистрацию и
-JWT-аутентификацию, публикацию статей с тегами, комментарии, лайки и отложенный
-подсчёт просмотров через Redis.
+REST API для IT-блога на Go. Auth-сервис отвечает за регистрацию, вход и выпуск
+JWT. Блог-сервис хранит статьи, теги, комментарии и лайки, а просмотры считает
+с помощью Redis. Публичные запросы проходят через reverse proxy.
 
 ## Возможности
 
-- регистрация и вход по email и паролю;
-- JWT-аутентификация с алгоритмом HS256;
+- регистрация и вход по email и паролю в отдельном auth-сервисе;
+- JWT-аутентификация: auth-сервис выдаёт EdDSA-токены, блог проверяет их локально;
 - создание, чтение, обновление и удаление статей;
 - проверка авторства при обновлении и удалении статьи;
 - теги, фильтрация и пагинация;
 - комментарии к статьям;
 - установка и снятие лайка одним endpoint;
 - буферизация просмотров в Redis и перенос в PostgreSQL фоновым worker;
-- структурированные JSON- или text-логи с request ID;
+- структурированные JSON или text логи с request ID;
 - graceful shutdown HTTP-сервера и фонового worker;
 - тесты, race detector, линтеры и контроль покрытия в GitHub Actions;
 - публикация Docker-образов в GitHub Container Registry.
@@ -25,12 +25,14 @@ JWT-аутентификацию, публикацию статей с тега�
 
 | Назначение | Технология |
 |---|---|
-| Язык | Go 1.25 |
+| Язык | Go 1.27.0 |
+| UUID | Стандартный пакет `uuid` |
 | HTTP | Gin |
+| Reverse proxy | Caddy 2 |
 | База данных | PostgreSQL 15 |
 | Драйвер PostgreSQL | pgx через `database/sql` |
 | Кэш и просмотры | Redis 7 |
-| Аутентификация | JWT HS256 и bcrypt |
+| Аутентификация | JWT EdDSA (Ed25519), bcrypt |
 | Миграции | golang-migrate |
 | Логирование | `log/slog` |
 | Контейнеры | Docker и Docker Compose |
@@ -40,26 +42,81 @@ JWT-аутентификацию, публикацию статей с тега�
 
 ```text
 Blog-Backend/
-├── cmd/blog/                 # Точка входа, HTTP-сервер и graceful shutdown
-├── internal/
-│   ├── handlers/             # HTTP-обработчики Gin
-│   ├── logger/               # Настройка slog
-│   ├── middleware/           # JWT, access logs и panic recovery
-│   ├── models/               # API- и доменные структуры
-│   ├── repositories/         # PostgreSQL и Redis
-│   ├── services/             # Бизнес-логика
-│   └── workers/              # Перенос просмотров из Redis в PostgreSQL
-├── migrations/               # SQL-миграции
-├── pkg/                      # JWT-утилиты
-├── .github/workflows/ci.yml  # CI и публикация Docker-образа
-├── .golangci.yml             # Конфигурация линтеров
-├── Dockerfile
+├── blog/                     # Самостоятельный Go-модуль основного API
+│   ├── cmd/blog/             # Точка входа и graceful shutdown
+│   ├── internal/handlers/    # HTTP-обработчики статей и взаимодействий
+│   ├── internal/services/    # Логика блога
+│   ├── internal/repositories/ # PostgreSQL и Redis
+│   ├── internal/middleware/  # Локальная проверка JWT и логирование
+│   ├── internal/workers/     # Перенос просмотров из Redis
+│   ├── migrations/           # Миграции БД блога
+│   ├── .env.example          # Образец настройки публичного ключа
+│   ├── go.mod
+│   └── Dockerfile
+├── auth/                     # Самостоятельный Go-модуль auth-сервиса
+│   ├── cmd/auth/             # Точка входа и graceful shutdown
+│   ├── internal/handlers/    # Регистрация и вход
+│   ├── internal/services/    # Работа с пользователями и паролями
+│   ├── internal/repositories/ # PostgreSQL пользователей
+│   ├── internal/tokens/      # Выпуск Ed25519 JWT
+│   ├── migrations/           # Миграции БД auth-сервиса
+│   ├── .env.example          # Образец настройки закрытого ключа
+│   ├── go.mod
+│   └── Dockerfile
+├── proxy/                    # Публичный reverse proxy
+│   ├── Caddyfile             # Правила маршрутизации
+│   └── Dockerfile            # Образ Caddy
+├── .github/workflows/ci.yml  # Проверки и публикация образов обоих сервисов
 └── docker-compose.yml
 ```
+
+Сервисы не импортируют пакеты друг друга. В каждом сервисе свои зависимости,
+Dockerfile и миграции. Proxy направляет регистрацию и вход в auth-сервис,
+остальные запросы — в блог. Пользователи хранятся только в базе auth-сервиса;
+блог проверяет JWT по публичному ключу.
+
+```mermaid
+flowchart LR
+    Client[Клиент] -->|HTTP :8080| Proxy[Proxy / Caddy]
+    Proxy -->|/api/v1/auth/*| Auth[Auth :8081]
+    Proxy -->|/api/v1/articles/*| Blog[Blog :8080]
+    Auth --> AuthDB[(БД auth)]
+    Blog --> BlogDB[(БД блога)]
+    Blog --> Redis[(Redis)]
+```
+
+Auth выдаёт JWT клиенту через proxy. В защищённых запросах клиент передаёт его
+в заголовке `Authorization` через тот же proxy. Блог проверяет подпись локально:
+для каждого запроса обращаться к auth-сервису не требуется. Закрытый ключ
+доступен только auth-сервису, соответствующий публичный ключ — блогу.
 
 Зависимости направлены от HTTP-обработчиков к сервисам, а от сервисов — к
 интерфейсам репозиториев. Благодаря этому сервисы и handlers тестируются без
 запуска PostgreSQL и Redis.
+
+### Проксирование через Caddy
+
+Compose запускает отдельный контейнер `proxy` на базе `caddy:2-alpine`. Это
+единственная публичная точка входа: порт `8080` контейнера опубликован на
+порту `8080` хоста (при локальном запуске — `http://localhost:8080`). Caddy
+обращается к сервисам по их именам и портам
+внутри сети Compose, указанным в [`proxy/Caddyfile`](proxy/Caddyfile):
+
+| Путь запроса | Куда направляет Caddy |
+|---|---|
+| `/api/v1/auth/*` | `auth:8081` — регистрация и вход |
+| Все остальные пути | `api:8080` — API блога |
+
+Блоки `handle` выбирают один маршрут для запроса; второй блок без условия служит
+резервным маршрутом. Caddy сохраняет исходный путь и параметры запроса:
+например, `/api/v1/auth/login` поступает в auth-сервис по тому же пути. Обычные
+заголовки, включая `Authorization` и `X-Request-ID`, также передаются сервису.
+Caddy не проверяет JWT: auth-сервис выдаёт токен, а middleware блога проверяет
+его подпись на защищённых маршрутах. Подробнее о поведении Caddy:
+[`handle`](https://caddyserver.com/docs/caddyfile/directives/handle) и
+[`reverse_proxy`](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy).
+
+Текущий Caddyfile слушает HTTP на `:8080`; домен и TLS в нём не настроены.
 
 ### Подсчёт просмотров
 
@@ -69,16 +126,10 @@ PostgreSQL. Это уменьшает количество записей в о�
 
 ## Схема данных
 
+### База auth-сервиса
+
 ```mermaid
 erDiagram
-    USERS ||--o{ ARTICLES : writes
-    USERS ||--o{ COMMENTS : writes
-    USERS ||--o{ LIKES : adds
-    ARTICLES ||--o{ COMMENTS : has
-    ARTICLES ||--o{ LIKES : receives
-    ARTICLES ||--o{ ARTICLE_TAGS : has
-    TAGS ||--o{ ARTICLE_TAGS : assigned
-
     USERS {
         uuid id PK
         varchar username UK
@@ -87,9 +138,21 @@ erDiagram
         timestamptz created_at
         text bio
     }
+```
+
+### База блога
+
+```mermaid
+erDiagram
+    ARTICLES ||--o{ COMMENTS : has
+    ARTICLES ||--o{ LIKES : receives
+    ARTICLES ||--o{ ARTICLE_TAGS : has
+    TAGS ||--o{ ARTICLE_TAGS : assigned
+
     ARTICLES {
         uuid id PK
-        uuid author_id FK
+        uuid author_id
+        varchar author_username
         varchar title
         text content
         int views_count
@@ -106,15 +169,36 @@ erDiagram
     COMMENTS {
         uuid id PK
         uuid article_id FK
-        uuid user_id FK
+        uuid user_id
+        varchar author_username
         text content
         timestamptz created_at
     }
     LIKES {
         uuid article_id PK, FK
-        uuid user_id PK, FK
+        uuid user_id PK
     }
 ```
+
+Между базами нет внешних ключей. `articles.author_id`, `comments.user_id` и
+`likes.user_id` содержат ID из проверенного JWT. Статьи и комментарии
+дополнительно хранят имя автора на момент создания в `author_username`. При
+чтении блог берёт его из самой записи; таблицы пользователей в базе блога нет.
+
+### Миграции существующей базы
+
+Миграции добавляются последовательно: ранние файлы описывают прежнюю схему,
+а следующие меняют её. На чистой базе применяются все миграции, и итоговая
+схема блога уже не содержит таблицу `users`.
+
+Миграция `000007` сохраняет имена авторов существующих статей и комментариев
+в самих записях и убирает внешние ключи на старую таблицу `users` блога.
+Миграция `000008` заполняет оставшиеся пропуски и делает `author_username`
+обязательным. Если имя автора нельзя восстановить, миграция завершится ошибкой
+и не изменит схему. Миграция `000009` удаляет старую таблицу `users` только
+если она пуста. При откате `000009` таблица создаётся снова пустой; откат к
+схеме до `000007` после появления новых авторов потребует переноса их ID.
+Пользователи из старой базы блога автоматически не переносятся в базу auth.
 
 ## Быстрый запуск
 
@@ -138,18 +222,36 @@ cd Blog-Backend
 POSTGRES_USER=blog
 POSTGRES_PASSWORD=change_me
 POSTGRES_DB=blog
-JWTKEY=replace_with_a_long_random_secret
+AUTH_POSTGRES_USER=auth
+AUTH_POSTGRES_PASSWORD=change_me_too
+AUTH_POSTGRES_DB=auth
 LOG_LEVEL=info
 LOG_FORMAT=json
 ```
 
-Для генерации JWT-ключа можно использовать:
+Создайте `auth/.env` по образцу `auth/.env.example`. Сгенерируйте
+`AUTH_JWT_PRIVATE_KEY` и запишите полученное значение в файл:
 
 ```bash
-openssl rand -hex 32
+openssl rand -base64 32
 ```
 
-Не добавляйте `.env` в Git.
+Из того же seed вычислите публичный ключ для `blog/.env`:
+
+```bash
+printf 'BLOG_JWT_PUBLIC_KEY=%s\n' "$(
+  { printf '\x30\x2e\x02\x01\x00\x30\x05\x06\x03\x2b\x65\x70\x04\x22\x04\x20';
+    sed -n 's/^AUTH_JWT_PRIVATE_KEY=//p' auth/.env | base64 -d; } |
+  openssl pkey -inform DER -pubout -outform DER |
+  tail -c 32 | base64 -w0
+)" > blog/.env
+chmod 600 blog/.env
+```
+
+Префикс в команде представляет 32-байтный seed в формате PKCS#8, который
+понимает OpenSSL. Создайте эту пару ключей один раз: при замене ключа ранее
+выданные JWT перестанут проходить проверку. Файлы `.env` игнорируются Git и не
+попадают в Docker-образы.
 
 ### 3. Запуск
 
@@ -157,13 +259,20 @@ openssl rand -hex 32
 docker compose up --build
 ```
 
-Compose запустит PostgreSQL, Redis, применит миграции и поднимет API на
-`http://localhost:8080`.
+Compose запустит две отдельные базы PostgreSQL, Redis, миграции обоих сервисов
+и reverse proxy на `http://localhost:8080`. Proxy передаёт регистрацию и вход
+в auth-сервис, а маршруты статей — в блог. Вход выдаёт Ed25519 JWT с `user_id`
+и `username`; блог проверяет подпись по своему публичному ключу.
+Порты API, auth-сервиса, PostgreSQL и Redis не публикуются на хосте.
+
+На существующей базе блога миграция `000009` остановит запуск, если в старой
+таблице `users` остались записи. Перед удалением этой таблицы их нужно
+разобрать отдельно; миграция не переносит учётные записи между базами.
 
 Посмотреть логи:
 
 ```bash
-docker compose logs -f api
+docker compose logs -f proxy api auth
 ```
 
 Остановить приложение:
@@ -172,8 +281,9 @@ docker compose logs -f api
 docker compose down --timeout 20
 ```
 
-Таймаут в 20 секунд оставляет приложению время на graceful shutdown. Данные
-PostgreSQL сохраняются в volume `postgres_data`.
+Таймаут в 20 секунд оставляет приложениям время на graceful shutdown. Данные
+PostgreSQL сохраняются в отдельных volumes `postgres_data` и
+`auth_postgres_data`.
 
 ## Переменные окружения
 
@@ -183,13 +293,24 @@ PostgreSQL сохраняются в volume `postgres_data`.
 | `POSTGRES_PASSWORD` | да | — | Пароль PostgreSQL |
 | `POSTGRES_DB` | да | — | Имя базы данных |
 | `POSTGRES_HOST` | нет | `localhost` | Хост PostgreSQL; в Compose используется `db` |
+| `AUTH_POSTGRES_USER` | да | — | Пользователь PostgreSQL auth-сервиса |
+| `AUTH_POSTGRES_PASSWORD` | да | — | Пароль PostgreSQL auth-сервиса |
+| `AUTH_POSTGRES_DB` | да | — | Имя базы данных auth-сервиса |
+| `AUTH_POSTGRES_HOST` | нет | `localhost` | Хост PostgreSQL auth-сервиса; в Compose используется `auth_db` |
+| `AUTH_JWT_PRIVATE_KEY` | да, для auth-сервиса | — | Base64-кодированный 32-байтный seed Ed25519 в `auth/.env` |
+| `BLOG_JWT_PUBLIC_KEY` | да, для блога | — | Base64-кодированный 32-байтный публичный ключ Ed25519 в `blog/.env` |
 | `REDIS_HOST` | нет | `localhost` | Хост Redis; в Compose используется `redis` |
-| `JWTKEY` | да | — | Секрет подписи JWT |
 | `LOG_LEVEL` | нет | `info` | `debug`, `info`, `warn` или `error` |
 | `LOG_FORMAT` | нет | `json` | `json` или `text` |
 
-Порты PostgreSQL, Redis и API сейчас заданы в конфигурации как `5432`,
-`6379` и `8080`.
+На хосте публикуется только порт `8080` публичного proxy. Внутри сети Compose
+API слушает порт `8080`, auth-сервис — `8081`, обе базы PostgreSQL — `5432`,
+Redis — `6379`.
+
+Auth-сервис читает закрытый ключ из `auth/.env`, блог читает соответствующий
+публичный ключ из `blog/.env`. Если ключи не совпадают, защищённые маршруты
+возвращают `401`. Если `BLOG_JWT_PUBLIC_KEY` отсутствует или имеет неверный
+формат, блог не запустится.
 
 ## API
 
@@ -239,6 +360,11 @@ curl -X POST http://localhost:8080/api/v1/auth/login \
 
 JWT действует 24 часа.
 
+При регистрации auth-сервис возвращает `201` и `null`; повторный email или
+username — `409`. Успешный вход возвращает `200` с JWT, неверные учётные данные
+— `401`. Токен содержит `user_id` и `username`; блог также проверяет срок
+действия, издателя `blog-auth` и аудиторию `blog`.
+
 Для защищённых endpoint передавайте токен:
 
 ```http
@@ -261,7 +387,7 @@ Authorization: Bearer <JWT>
 |---|---:|---|
 | `page` | `1` | Номер страницы, начиная с 1 |
 | `limit` | `20` | Размер страницы от 1 до 99 |
-| `tag` | — | Повторяемый фильтр по тегу |
+| `tag` | — | Повторяемый фильтр: статья подходит при совпадении любого указанного тега |
 
 Пример фильтрации:
 
@@ -281,6 +407,9 @@ curl -X POST http://localhost:8080/api/v1/articles/ \
     "tags": ["go", "tutorial"]
   }'
 ```
+
+ID и имя автора берутся из JWT. Поле `author` в теле запроса не требуется и не
+может подменить автора статьи.
 
 Обновление статьи:
 
@@ -330,11 +459,11 @@ curl -X POST http://localhost:8080/api/v1/articles/<ARTICLE_UUID>/like \
 
 ## Логирование
 
-По умолчанию приложение пишет структурированные JSON-логи в stdout. Для
+Оба Go-сервиса по умолчанию пишут структурированные JSON-логи в stdout. Для
 локальной разработки можно установить `LOG_FORMAT=text`.
 
-Каждый HTTP-ответ содержит заголовок `X-Request-ID`. Клиент может передать
-собственный идентификатор в запросе; если его нет, приложение создаст UUID.
+Ответы Go-сервисов содержат заголовок `X-Request-ID`. Клиент может передать
+собственный идентификатор в запросе; если его нет, сервис создаст UUID.
 
 Пример access log:
 
@@ -358,29 +487,39 @@ middleware, логируется со stack trace и возвращает HTTP 5
 
 ## Graceful shutdown
 
-Приложение обрабатывает `SIGINT` и `SIGTERM`:
+Оба сервиса обрабатывают `SIGINT` и `SIGTERM`: прекращают принимать новые
+HTTP-запросы и до 10 секунд ожидают активные. Затем auth закрывает подключение
+к своей базе PostgreSQL. Блог дополнительно останавливает фоновый worker
+(ожидание до 5 секунд) и закрывает подключения к Redis и своей базе PostgreSQL.
 
-1. прекращает принимать новые HTTP-запросы;
-2. до 10 секунд ожидает активные запросы;
-3. останавливает фоновый worker и ожидает его до 5 секунд;
-4. закрывает подключения Redis и PostgreSQL.
-
-Gin остаётся HTTP-маршрутизатором и работает внутри стандартного
-`http.Server`.
+В обоих сервисах Gin работает внутри стандартного `http.Server`.
 
 ## Разработка и проверки
 
-Для тестов и сборки нужен Go 1.25. Для запуска самого API также нужны PostgreSQL
-и Redis — локальные или запущенные в контейнерах.
+Для тестов и сборки нужен Go 1.27.0. При запуске без Compose auth-сервису
+нужна отдельная база PostgreSQL, блогу — своя база PostgreSQL и Redis.
 
-Если PostgreSQL и Redis уже доступны локально и переменные окружения настроены,
-API можно запустить без Compose:
+Если базы и Redis доступны локально, настройте переменные окружения из таблицы
+выше и запустите каждый сервис из его папки. `auth/.env` и `blog/.env` содержат
+ключи JWT, а переменные подключения к базам можно экспортировать в окружение.
+Compose не публикует порты баз и Redis на хосте.
+
+В первом терминале из корня проекта:
 
 ```bash
+cd auth
+go run ./cmd/auth
+```
+
+Во втором терминале из корня проекта:
+
+```bash
+cd blog
 go run ./cmd/blog
 ```
 
-Запустить тесты:
+Команды Go выполняются внутри папки нужного сервиса (`blog` или `auth`).
+Например, для блога:
 
 ```bash
 go test ./...
@@ -400,7 +539,7 @@ go tool cover -func=coverage.out
 go tool cover -html=coverage.out
 ```
 
-Текущий уровень покрытия — около 71%, минимальный порог CI — 70%.
+CI проверяет покрытие каждого сервиса отдельно; минимальный порог — 70%.
 
 Запустить статический анализ:
 
@@ -409,26 +548,28 @@ go vet ./...
 golangci-lint run
 ```
 
-Конфигурация golangci-lint находится в `.golangci.yml`; CI использует версию
-`v2.12.2`.
+В каждом сервисе своя `.golangci.yml`; CI использует версию `v2.13.2`.
 
-## CI и публикация Docker-образа
+## CI и публикация Docker-образов
 
 Workflow `.github/workflows/ci.yml` запускается:
 
-- при push в `main`;
+- при push в любую ветку;
 - для pull request в `main`;
 - при push Git-тега вида `v*`;
 - вручную через `workflow_dispatch`.
 
-Jobs `Lint` и `Test and build` выполняются параллельно. Они проверяют
-форматирование, линтеры, race detector, покрытие, сборку приложения и Dockerfile.
+Для каждого сервиса jobs `Lint` и `Test and build` проверяют форматирование,
+линтеры, race detector, покрытие, сборку приложения и Dockerfile.
+Push в рабочую ветку запускает только эти проверки.
 
-После успешных проверок push в `main` публикует образ:
+После успешных проверок push в `main` публикует два образа:
 
 ```text
 ghcr.io/lya122221/blog-backend:latest
 ghcr.io/lya122221/blog-backend:sha-<COMMIT_SHA>
+ghcr.io/lya122221/blog-backend-auth:latest
+ghcr.io/lya122221/blog-backend-auth:sha-<COMMIT_SHA>
 ```
 
 Git-тег создаёт версионные Docker-теги:
@@ -441,6 +582,8 @@ git push origin v1.0.0
 ```text
 ghcr.io/lya122221/blog-backend:1.0.0
 ghcr.io/lya122221/blog-backend:1.0
+ghcr.io/lya122221/blog-backend-auth:1.0.0
+ghcr.io/lya122221/blog-backend-auth:1.0
 ```
 
 Скачать опубликованный образ:
@@ -449,5 +592,5 @@ ghcr.io/lya122221/blog-backend:1.0
 docker pull ghcr.io/lya122221/blog-backend:latest
 ```
 
-Workflow создаёт provenance-attestation для опубликованного образа. Автоматическое
-развёртывание образа на production-сервер пока не настроено.
+Workflow создаёт provenance-attestation для каждого опубликованного образа.
+Автоматическое развёртывание на production-сервер пока не настроено.
