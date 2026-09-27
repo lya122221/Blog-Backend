@@ -3,8 +3,6 @@ services:
     image: postgres:15-alpine
     container_name: blog_postgres
     restart: always
-    ports:
-      - "5432:5432"
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -21,8 +19,6 @@ services:
     image: redis:7-alpine
     container_name: blog_redis
     restart: always
-    ports:
-      - "6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -41,8 +37,6 @@ services:
     build: .
     container_name: blog_api
     restart: always
-    ports:
-      - "8080:8080"
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -59,6 +53,15 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+
+  proxy:
+    build: ./proxy
+    container_name: blog_proxy
+    restart: always
+    ports:
+      - "8080:8080"
+    depends_on:
+      - api
 
 volumes:
   postgres_data:
