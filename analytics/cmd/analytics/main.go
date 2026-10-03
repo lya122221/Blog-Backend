@@ -2,8 +2,11 @@ package main
 
 import (
 	"analytics/internal/config"
+	"analytics/internal/handlers"
 	"analytics/internal/logger"
 	"analytics/internal/middleware"
+	"analytics/internal/publisher"
+	"analytics/internal/services"
 	"context"
 	"errors"
 	"fmt"
@@ -41,10 +44,17 @@ func run() error {
 		return fmt.Errorf("configure logger: %w", err)
 	}
 	slog.SetDefault(appLogger)
+	producer, err := publisher.NewKafka(settings.KafkaBrokers, settings.KafkaTopic)
+	if err != nil {
+		return fmt.Errorf("configure Kafka producer: %w", err)
+	}
+	defer producer.Close()
+	viewService := services.NewViewsService(producer)
+	viewHandler := handlers.NewViewsHandler(viewService, appLogger, settings.CookieSecure)
 
 	server := &http.Server{
 		Addr:              settings.Address(),
-		Handler:           newRouter(appLogger),
+		Handler:           newRouter(appLogger, viewHandler.Views),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	listener, err := net.Listen("tcp", server.Addr)
@@ -58,9 +68,10 @@ func run() error {
 	return serveHTTP(signalCtx, server, listener, appLogger)
 }
 
-func newRouter(appLogger *slog.Logger) *gin.Engine {
+func newRouter(appLogger *slog.Logger, handleViews gin.HandlerFunc) *gin.Engine {
 	router := gin.New()
 	router.Use(middleware.RequestLogger(appLogger), middleware.Recovery(appLogger))
+	router.POST("/api/v1/analytics/views", handleViews)
 	return router
 }
 

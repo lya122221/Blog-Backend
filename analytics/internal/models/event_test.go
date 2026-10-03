@@ -1,4 +1,4 @@
-package events
+package models
 
 import (
 	"encoding/json"
@@ -15,7 +15,7 @@ const (
 	authorID  = "55555555-5555-4555-8555-555555555555"
 )
 
-func validEvent(eventType Type) Event {
+func validEvent(eventType EventType) Event {
 	return Event{
 		Version:    SchemaVersion,
 		ID:         eventID,
@@ -30,7 +30,7 @@ func validEvent(eventType Type) Event {
 }
 
 func TestValidateAcceptsEveryEventType(t *testing.T) {
-	for _, eventType := range []Type{
+	for _, eventType := range []EventType{
 		ArticleImpression, ArticleOpened, ArticleLiked, ArticleUnliked,
 		CommentCreated, ArticleCreated, ArticleUpdated, ArticleDeleted,
 	} {
@@ -101,7 +101,7 @@ func TestEventJSONContract(t *testing.T) {
 func TestDefaultWeights(t *testing.T) {
 	weights := DefaultWeights()
 	for _, test := range []struct {
-		eventType Type
+		eventType EventType
 		want      int
 	}{
 		{ArticleImpression, 1},

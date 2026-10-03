@@ -1,4 +1,4 @@
-package events
+package models
 
 import (
 	"fmt"
@@ -9,23 +9,23 @@ import (
 
 const SchemaVersion = 1
 
-type Type string
+type EventType string
 
 const (
-	ArticleImpression Type = "article.impression"
-	ArticleOpened     Type = "article.opened"
-	ArticleLiked      Type = "article.liked"
-	ArticleUnliked    Type = "article.unliked"
-	CommentCreated    Type = "comment.created"
-	ArticleCreated    Type = "article.created"
-	ArticleUpdated    Type = "article.updated"
-	ArticleDeleted    Type = "article.deleted"
+	ArticleImpression EventType = "article.impression"
+	ArticleOpened     EventType = "article.opened"
+	ArticleLiked      EventType = "article.liked"
+	ArticleUnliked    EventType = "article.unliked"
+	CommentCreated    EventType = "comment.created"
+	ArticleCreated    EventType = "article.created"
+	ArticleUpdated    EventType = "article.updated"
+	ArticleDeleted    EventType = "article.deleted"
 )
 
 type Event struct {
 	Version    int       `json:"version"`
 	ID         string    `json:"event_id"`
-	Type       Type      `json:"type"`
+	Type       EventType `json:"type"`
 	ArticleID  string    `json:"article_id"`
 	AuthorID   string    `json:"author_id,omitempty"`
 	UserID     string    `json:"user_id,omitempty"`
@@ -70,34 +70,4 @@ func (event Event) Validate() error {
 	}
 
 	return nil
-}
-
-type Weights struct {
-	Impression int
-	Open       int
-	Like       int
-	Comment    int
-}
-
-func DefaultWeights() Weights {
-	return Weights{Impression: 1, Open: 3, Like: 6, Comment: 6}
-}
-
-func (weights Weights) ScoreDelta(eventType Type) (int, error) {
-	switch eventType {
-	case ArticleImpression:
-		return weights.Impression, nil
-	case ArticleOpened:
-		return weights.Open, nil
-	case ArticleLiked:
-		return weights.Like, nil
-	case ArticleUnliked:
-		return -weights.Like, nil
-	case CommentCreated:
-		return weights.Comment, nil
-	case ArticleCreated, ArticleUpdated, ArticleDeleted:
-		return 0, nil
-	default:
-		return 0, fmt.Errorf("unsupported event type %q", eventType)
-	}
 }

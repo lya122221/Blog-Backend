@@ -38,7 +38,7 @@ func TestServeHTTPShutsDownGracefully(t *testing.T) {
 	listener := newListenerStub(nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	server := &http.Server{Handler: newRouter(testLogger()), ReadHeaderTimeout: time.Second}
+	server := &http.Server{Handler: newRouter(testLogger(), func(*gin.Context) {}), ReadHeaderTimeout: time.Second}
 	done := make(chan error, 1)
 	go func() {
 		done <- serveHTTP(ctx, server, listener, testLogger())
@@ -64,7 +64,7 @@ func TestServeHTTPShutsDownGracefully(t *testing.T) {
 func TestServeHTTPReportsListenerFailure(t *testing.T) {
 	serveErr := errors.New("listener failed")
 	listener := newListenerStub(serveErr)
-	server := &http.Server{Handler: newRouter(testLogger()), ReadHeaderTimeout: time.Second}
+	server := &http.Server{Handler: newRouter(testLogger(), func(*gin.Context) {}), ReadHeaderTimeout: time.Second}
 	err := serveHTTP(context.Background(), server, listener, testLogger())
 	if err == nil || !strings.Contains(err.Error(), "serve HTTP") || !errors.Is(err, serveErr) {
 		t.Fatalf("serveHTTP error = %v", err)
