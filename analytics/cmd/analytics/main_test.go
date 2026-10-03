@@ -22,12 +22,17 @@ func testLogger() *slog.Logger {
 }
 
 func TestRunRejectsInvalidConfiguration(t *testing.T) {
+	t.Setenv("ANALYTICS_KAFKA_BROKERS", "localhost:9092")
+	t.Setenv("ANALYTICS_KAFKA_TOPIC", "article-events")
+	t.Setenv("ANALYTICS_CLICKHOUSE_ADDR", "localhost:9000")
+	t.Setenv("ANALYTICS_CLICKHOUSE_DATABASE", "default")
+	t.Setenv("ANALYTICS_CLICKHOUSE_USER", "default")
 	t.Setenv("ANALYTICS_PORT", "0")
 	if err := run(); err == nil || !strings.Contains(err.Error(), "configure analytics service") {
 		t.Fatalf("run error = %v", err)
 	}
 
-	t.Setenv("ANALYTICS_PORT", "")
+	t.Setenv("ANALYTICS_PORT", "8082")
 	t.Setenv("LOG_FORMAT", "xml")
 	if err := run(); err == nil || !strings.Contains(err.Error(), "configure logger") {
 		t.Fatalf("run error = %v", err)

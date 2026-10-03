@@ -7,11 +7,6 @@ import (
 	"strings"
 )
 
-const (
-	defaultPort       = 8082
-	defaultKafkaTopic = "article-events"
-)
-
 type Config struct {
 	Port         int
 	LogLevel     string
@@ -19,31 +14,28 @@ type Config struct {
 	KafkaBrokers []string
 	KafkaTopic   string
 	CookieSecure bool
+	ClickHouse   ClickHouseConfig
 }
 
 func Load() (Config, error) {
 	config := Config{
-		Port:         defaultPort,
-		LogLevel:     os.Getenv("LOG_LEVEL"),
-		LogFormat:    os.Getenv("LOG_FORMAT"),
-		KafkaBrokers: []string{"localhost:9092"},
-		KafkaTopic:   defaultKafkaTopic,
+		LogLevel:  os.Getenv("LOG_LEVEL"),
+		LogFormat: os.Getenv("LOG_FORMAT"),
 	}
-	if value := os.Getenv("ANALYTICS_KAFKA_BROKERS"); value != "" {
-		config.KafkaBrokers = nil
-		for _, broker := range strings.Split(value, ",") {
-			broker = strings.TrimSpace(broker)
-			if broker == "" {
-				return Config{}, fmt.Errorf("invalid ANALYTICS_KAFKA_BROKERS %q", value)
-			}
-			config.KafkaBrokers = append(config.KafkaBrokers, broker)
-		}
+	brokers := os.Getenv("ANALYTICS_KAFKA_BROKERS")
+	if strings.TrimSpace(brokers) == "" {
+		return Config{}, fmt.Errorf("missing ANALYTICS_KAFKA_BROKERS")
 	}
-	if value := os.Getenv("ANALYTICS_KAFKA_TOPIC"); value != "" {
-		config.KafkaTopic = strings.TrimSpace(value)
-		if config.KafkaTopic == "" {
-			return Config{}, fmt.Errorf("invalid ANALYTICS_KAFKA_TOPIC %q", value)
+	for _, broker := range strings.Split(brokers, ",") {
+		broker = strings.TrimSpace(broker)
+		if broker == "" {
+			return Config{}, fmt.Errorf("invalid ANALYTICS_KAFKA_BROKERS %q", brokers)
 		}
+		config.KafkaBrokers = append(config.KafkaBrokers, broker)
+	}
+	config.KafkaTopic = strings.TrimSpace(os.Getenv("ANALYTICS_KAFKA_TOPIC"))
+	if config.KafkaTopic == "" {
+		return Config{}, fmt.Errorf("missing ANALYTICS_KAFKA_TOPIC")
 	}
 	if value := os.Getenv("ANALYTICS_COOKIE_SECURE"); value != "" {
 		cookieSecure, err := strconv.ParseBool(value)
@@ -53,13 +45,21 @@ func Load() (Config, error) {
 		config.CookieSecure = cookieSecure
 	}
 
-	if value := os.Getenv("ANALYTICS_PORT"); value != "" {
-		port, err := strconv.Atoi(value)
-		if err != nil || port < 1 || port > 65535 {
-			return Config{}, fmt.Errorf("invalid ANALYTICS_PORT %q", value)
-		}
-		config.Port = port
+	portText := strings.TrimSpace(os.Getenv("ANALYTICS_PORT"))
+	if portText == "" {
+		return Config{}, fmt.Errorf("missing ANALYTICS_PORT")
 	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port < 1 || port > 65535 {
+		return Config{}, fmt.Errorf("invalid ANALYTICS_PORT %q", portText)
+	}
+	config.Port = port
+
+	clickHouse, err := LoadClickHouse()
+	if err != nil {
+		return Config{}, err
+	}
+	config.ClickHouse = clickHouse
 
 	return config, nil
 }
