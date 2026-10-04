@@ -1,4 +1,4 @@
-package publisher
+package producer
 
 import (
 	"analytics/internal/models"

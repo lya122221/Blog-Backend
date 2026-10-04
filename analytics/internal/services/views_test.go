@@ -10,20 +10,20 @@ import (
 	"uuid"
 )
 
-type publisherStub struct {
+type producerStub struct {
 	batches [][]models.Event
 	err     error
 }
 
-func (stub *publisherStub) Publish(_ context.Context, batch []models.Event) error {
+func (stub *producerStub) Publish(_ context.Context, batch []models.Event) error {
 	stub.batches = append(stub.batches, batch)
 	return stub.err
 }
 
 var fixedNow = time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
 
-func newTestService(stub *publisherStub) *ViewsService {
-	return &ViewsService{publisher: stub, now: func() time.Time { return fixedNow }}
+func newTestService(stub *producerStub) *ViewsService {
+	return &ViewsService{producer: stub, now: func() time.Time { return fixedNow }}
 }
 
 func validView() models.ViewEvent {
@@ -34,7 +34,7 @@ func validView() models.ViewEvent {
 }
 
 func TestRecordViewsPublishesValidatedBatch(t *testing.T) {
-	stub := &publisherStub{}
+	stub := &producerStub{}
 	service := newTestService(stub)
 	opened := validView()
 	impression := validView()
@@ -80,7 +80,7 @@ func TestRecordViewsRejectsInvalidBatchBeforePublishing(t *testing.T) {
 	}
 	for name, test := range cases {
 		t.Run(name, func(t *testing.T) {
-			stub := &publisherStub{}
+			stub := &producerStub{}
 			err := newTestService(stub).RecordViews(context.Background(), test.request, uuid.New().String())
 			var validationErr *ValidationError
 			if !errors.As(err, &validationErr) || !strings.Contains(err.Error(), test.message) || len(stub.batches) != 0 {
@@ -90,9 +90,9 @@ func TestRecordViewsRejectsInvalidBatchBeforePublishing(t *testing.T) {
 	}
 }
 
-func TestRecordViewsPropagatesPublisherFailure(t *testing.T) {
+func TestRecordViewsPropagatesProducerFailure(t *testing.T) {
 	brokerErr := errors.New("broker unavailable")
-	stub := &publisherStub{err: brokerErr}
+	stub := &producerStub{err: brokerErr}
 	err := newTestService(stub).RecordViews(context.Background(), models.ViewRequest{Events: []models.ViewEvent{validView()}}, uuid.New().String())
 	if !errors.Is(err, brokerErr) || len(stub.batches) != 1 {
 		t.Fatalf("error = %v, published batches = %d", err, len(stub.batches))

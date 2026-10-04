@@ -24,6 +24,9 @@ func testLogger() *slog.Logger {
 func TestRunRejectsInvalidConfiguration(t *testing.T) {
 	t.Setenv("ANALYTICS_KAFKA_BROKERS", "localhost:9092")
 	t.Setenv("ANALYTICS_KAFKA_TOPIC", "article-events")
+	t.Setenv("ANALYTICS_KAFKA_CONSUMER_GROUP", "analytics-events")
+	t.Setenv("ANALYTICS_KAFKA_BATCH_SIZE", "500")
+	t.Setenv("ANALYTICS_KAFKA_FLUSH_INTERVAL", "1s")
 	t.Setenv("ANALYTICS_CLICKHOUSE_ADDR", "localhost:9000")
 	t.Setenv("ANALYTICS_CLICKHOUSE_DATABASE", "default")
 	t.Setenv("ANALYTICS_CLICKHOUSE_USER", "default")
@@ -36,6 +39,58 @@ func TestRunRejectsInvalidConfiguration(t *testing.T) {
 	t.Setenv("LOG_FORMAT", "xml")
 	if err := run(); err == nil || !strings.Contains(err.Error(), "configure logger") {
 		t.Fatalf("run error = %v", err)
+	}
+}
+
+type workerStub struct {
+	run func(context.Context) error
+}
+
+func (worker *workerStub) Run(ctx context.Context) error {
+	return worker.run(ctx)
+}
+
+func TestServeAnalyticsStopsOnConsumerFailure(t *testing.T) {
+	failure := errors.New("consumer failed")
+	listener := newListenerStub(nil)
+	worker := &workerStub{run: func(context.Context) error {
+		<-listener.accepted
+		return failure
+	}}
+	server := &http.Server{Handler: newRouter(testLogger(), func(*gin.Context) {}), ReadHeaderTimeout: time.Second}
+	if err := serveAnalytics(context.Background(), server, listener, worker, testLogger()); !errors.Is(err, failure) {
+		t.Fatalf("serveAnalytics error = %v", err)
+	}
+}
+
+func TestServeAnalyticsStopsConsumerOnHTTPFailure(t *testing.T) {
+	failure := errors.New("listener failed")
+	listener := newListenerStub(failure)
+	worker := &workerStub{run: func(ctx context.Context) error {
+		<-ctx.Done()
+		return nil
+	}}
+	server := &http.Server{Handler: newRouter(testLogger(), func(*gin.Context) {}), ReadHeaderTimeout: time.Second}
+	if err := serveAnalytics(context.Background(), server, listener, worker, testLogger()); !errors.Is(err, failure) {
+		t.Fatalf("serveAnalytics error = %v", err)
+	}
+}
+
+func TestServeAnalyticsStopsOnContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	listener := newListenerStub(nil)
+	worker := &workerStub{run: func(ctx context.Context) error {
+		<-ctx.Done()
+		return nil
+	}}
+	server := &http.Server{Handler: newRouter(testLogger(), func(*gin.Context) {}), ReadHeaderTimeout: time.Second}
+	go func() {
+		<-listener.accepted
+		cancel()
+	}()
+	if err := serveAnalytics(ctx, server, listener, worker, testLogger()); err != nil {
+		t.Fatalf("serveAnalytics: %v", err)
 	}
 }
 

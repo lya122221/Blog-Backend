@@ -1,4 +1,4 @@
-package publisher
+package producer
 
 import (
 	"analytics/internal/models"
@@ -10,12 +10,12 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
-type Kafka struct {
+type Producer struct {
 	client *kgo.Client
 	topic  string
 }
 
-func NewKafka(brokers []string, topic string) (*Kafka, error) {
+func NewProducer(brokers []string, topic string) (*Producer, error) {
 	client, err := kgo.NewClient(
 		kgo.SeedBrokers(brokers...),
 		kgo.RecordDeliveryTimeout(5*time.Second),
@@ -23,10 +23,10 @@ func NewKafka(brokers []string, topic string) (*Kafka, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create Kafka client: %w", err)
 	}
-	return &Kafka{client: client, topic: topic}, nil
+	return &Producer{client: client, topic: topic}, nil
 }
 
-func (producer *Kafka) Publish(ctx context.Context, batch []models.Event) error {
+func (producer *Producer) Publish(ctx context.Context, batch []models.Event) error {
 	records, err := encodeRecords(producer.topic, batch)
 	if err != nil {
 		return err
@@ -53,6 +53,6 @@ func encodeRecords(topic string, batch []models.Event) ([]*kgo.Record, error) {
 	return records, nil
 }
 
-func (producer *Kafka) Close() {
+func (producer *Producer) Close() {
 	producer.client.Close()
 }

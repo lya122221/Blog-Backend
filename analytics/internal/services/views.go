@@ -9,17 +9,17 @@ import (
 
 const maxBatchSize = 100
 
-type ViewsPublisher interface {
+type ViewsProducer interface {
 	Publish(context.Context, []models.Event) error
 }
 
 type ViewsService struct {
-	publisher ViewsPublisher
-	now       func() time.Time
+	producer ViewsProducer
+	now      func() time.Time
 }
 
-func NewViewsService(publisher ViewsPublisher) *ViewsService {
-	return &ViewsService{publisher: publisher, now: time.Now}
+func NewViewsService(producer ViewsProducer) *ViewsService {
+	return &ViewsService{producer: producer, now: time.Now}
 }
 
 type ValidationError struct {
@@ -62,7 +62,7 @@ func (service *ViewsService) RecordViews(ctx context.Context, request models.Vie
 		}
 		batch = append(batch, event)
 	}
-	if err := service.publisher.Publish(ctx, batch); err != nil {
+	if err := service.producer.Publish(ctx, batch); err != nil {
 		return fmt.Errorf("publish view events: %w", err)
 	}
 	return nil

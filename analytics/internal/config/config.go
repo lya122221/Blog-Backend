@@ -5,16 +5,20 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Config struct {
-	Port         int
-	LogLevel     string
-	LogFormat    string
-	KafkaBrokers []string
-	KafkaTopic   string
-	CookieSecure bool
-	ClickHouse   ClickHouseConfig
+	Port          int
+	LogLevel      string
+	LogFormat     string
+	KafkaBrokers  []string
+	KafkaTopic    string
+	KafkaGroup    string
+	BatchSize     int
+	FlushInterval time.Duration
+	CookieSecure  bool
+	ClickHouse    ClickHouseConfig
 }
 
 func Load() (Config, error) {
@@ -37,6 +41,28 @@ func Load() (Config, error) {
 	if config.KafkaTopic == "" {
 		return Config{}, fmt.Errorf("missing ANALYTICS_KAFKA_TOPIC")
 	}
+	config.KafkaGroup = strings.TrimSpace(os.Getenv("ANALYTICS_KAFKA_CONSUMER_GROUP"))
+	if config.KafkaGroup == "" {
+		return Config{}, fmt.Errorf("missing ANALYTICS_KAFKA_CONSUMER_GROUP")
+	}
+	batchSizeText := strings.TrimSpace(os.Getenv("ANALYTICS_KAFKA_BATCH_SIZE"))
+	if batchSizeText == "" {
+		return Config{}, fmt.Errorf("missing ANALYTICS_KAFKA_BATCH_SIZE")
+	}
+	batchSize, err := strconv.Atoi(batchSizeText)
+	if err != nil || batchSize < 1 || batchSize > 10000 {
+		return Config{}, fmt.Errorf("invalid ANALYTICS_KAFKA_BATCH_SIZE %q", batchSizeText)
+	}
+	config.BatchSize = batchSize
+	flushText := strings.TrimSpace(os.Getenv("ANALYTICS_KAFKA_FLUSH_INTERVAL"))
+	if flushText == "" {
+		return Config{}, fmt.Errorf("missing ANALYTICS_KAFKA_FLUSH_INTERVAL")
+	}
+	flushInterval, err := time.ParseDuration(flushText)
+	if err != nil || flushInterval <= 0 || flushInterval >= time.Minute {
+		return Config{}, fmt.Errorf("invalid ANALYTICS_KAFKA_FLUSH_INTERVAL %q", flushText)
+	}
+	config.FlushInterval = flushInterval
 	if value := os.Getenv("ANALYTICS_COOKIE_SECURE"); value != "" {
 		cookieSecure, err := strconv.ParseBool(value)
 		if err != nil {

@@ -2,10 +2,13 @@ package main
 
 import (
 	"analytics/internal/config"
+	"analytics/internal/consumer"
 	"analytics/internal/handlers"
 	"analytics/internal/logger"
 	"analytics/internal/middleware"
-	"analytics/internal/publisher"
+	"analytics/internal/models"
+	"analytics/internal/producer"
+	"analytics/internal/repositories"
 	"analytics/internal/services"
 	"context"
 	"errors"
@@ -44,12 +47,34 @@ func run() error {
 		return fmt.Errorf("configure logger: %w", err)
 	}
 	slog.SetDefault(appLogger)
-	producer, err := publisher.NewKafka(settings.KafkaBrokers, settings.KafkaTopic)
+	signalCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+
+	eventsService, err := services.NewEventsService(models.DefaultWeights())
+	if err != nil {
+		return fmt.Errorf("configure event scoring: %w", err)
+	}
+	storage, err := repositories.NewClickHouse(signalCtx, settings.ClickHouse)
+	if err != nil {
+		return fmt.Errorf("connect to ClickHouse: %w", err)
+	}
+	defer func() {
+		if err := storage.Close(); err != nil {
+			appLogger.Error("close ClickHouse connection", "error", err)
+		}
+	}()
+	worker, err := consumer.NewConsumer(settings, eventsService, storage)
+	if err != nil {
+		return fmt.Errorf("configure Kafka consumer: %w", err)
+	}
+	defer worker.Close()
+
+	eventProducer, err := producer.NewProducer(settings.KafkaBrokers, settings.KafkaTopic)
 	if err != nil {
 		return fmt.Errorf("configure Kafka producer: %w", err)
 	}
-	defer producer.Close()
-	viewService := services.NewViewsService(producer)
+	defer eventProducer.Close()
+	viewService := services.NewViewsService(eventProducer)
 	viewHandler := handlers.NewViewsHandler(viewService, appLogger, settings.CookieSecure)
 
 	server := &http.Server{
@@ -62,10 +87,32 @@ func run() error {
 		return fmt.Errorf("listen HTTP: %w", err)
 	}
 
-	signalCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stopSignals()
+	return serveAnalytics(signalCtx, server, listener, worker, appLogger)
+}
 
-	return serveHTTP(signalCtx, server, listener, appLogger)
+type eventConsumer interface {
+	Run(context.Context) error
+}
+
+func serveAnalytics(ctx context.Context, server *http.Server, listener net.Listener, worker eventConsumer, appLogger *slog.Logger) error {
+	serviceCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	httpDone := make(chan error, 1)
+	workerDone := make(chan error, 1)
+	go func() { httpDone <- serveHTTP(serviceCtx, server, listener, appLogger) }()
+	go func() { workerDone <- worker.Run(serviceCtx) }()
+
+	select {
+	case httpErr := <-httpDone:
+		cancel()
+		return errors.Join(httpErr, <-workerDone)
+	case workerErr := <-workerDone:
+		if workerErr == nil && ctx.Err() == nil {
+			workerErr = errors.New("Kafka consumer stopped unexpectedly")
+		}
+		cancel()
+		return errors.Join(workerErr, <-httpDone)
+	}
 }
 
 func newRouter(appLogger *slog.Logger, handleViews gin.HandlerFunc) *gin.Engine {
