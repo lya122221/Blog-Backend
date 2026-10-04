@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"blog/internal/models"
+	"context"
 	"errors"
 	"uuid"
 )
@@ -57,13 +58,38 @@ func (s *Storage) CreateComment(articleID uuid.UUID, authorID string, authorUser
 	if authorUsername == "" {
 		return errors.New("author username is missing")
 	}
-
-	_, err := s.db.Exec(`
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+	var articleAuthorID string
+	if err := tx.QueryRow(`
+		SELECT author_id
+		FROM articles
+		WHERE id = $1
+		FOR UPDATE
+	`, articleID).Scan(&articleAuthorID); err != nil {
+		return err
+	}
+	_, err = tx.Exec(`
 		INSERT INTO comments (article_id, user_id, author_username, content)
 		VALUES ($1, $2, $3, $4)
 	`, articleID, authorID, authorUsername, content)
-
-	return err
+	if err != nil {
+		return err
+	}
+	if err := s.insertArticleEvent(context.Background(), tx, models.AnalyticsEvent{
+		Type:      models.CommentCreated,
+		ArticleID: articleID.String(),
+		AuthorID:  articleAuthorID,
+		UserID:    authorID,
+	}); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Storage) ToggleLike(articleID uuid.UUID, userID string) (bool, int, error) {
@@ -74,6 +100,15 @@ func (s *Storage) ToggleLike(articleID uuid.UUID, userID string) (bool, int, err
 	defer func() {
 		_ = tx.Rollback()
 	}()
+	var articleAuthorID string
+	if err := tx.QueryRow(`
+		SELECT author_id
+		FROM articles
+		WHERE id = $1
+		FOR UPDATE
+	`, articleID).Scan(&articleAuthorID); err != nil {
+		return false, 0, err
+	}
 
 	result, err := tx.Exec(`
 		DELETE FROM likes
@@ -109,6 +144,18 @@ func (s *Storage) ToggleLike(articleID uuid.UUID, userID string) (bool, int, err
 		WHERE article_id = $1
 	`, articleID).Scan(&likesCount)
 	if err != nil {
+		return false, 0, err
+	}
+	eventType := models.ArticleLiked
+	if !liked {
+		eventType = models.ArticleUnliked
+	}
+	if err := s.insertArticleEvent(context.Background(), tx, models.AnalyticsEvent{
+		Type:      eventType,
+		ArticleID: articleID.String(),
+		AuthorID:  articleAuthorID,
+		UserID:    userID,
+	}); err != nil {
 		return false, 0, err
 	}
 

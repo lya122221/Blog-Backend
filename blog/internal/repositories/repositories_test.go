@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -183,8 +184,19 @@ func TestArticleWriteRepository(t *testing.T) {
 		}
 	}
 	execCalls := 0
+	var events []models.AnalyticsEvent
 	c.exec = func(q string, a []driver.NamedValue) (driver.Result, error) {
 		execCalls++
+		if has(q, "INSERT INTO outbox_events") {
+			var event models.AnalyticsEvent
+			if err := json.Unmarshal([]byte(a[3].Value.(string)), &event); err != nil {
+				return nil, err
+			}
+			if a[0].Value != event.ID || a[1].Value != event.Type || a[2].Value != event.ArticleID || event.Version != models.AnalyticsSchemaVersion || event.OccurredAt.IsZero() {
+				return nil, fmt.Errorf("invalid outbox event: %+v", event)
+			}
+			events = append(events, event)
+		}
 		return driver.RowsAffected(1), nil
 	}
 	s := &Storage{db: openTestDB(t, c)}
@@ -204,6 +216,9 @@ func TestArticleWriteRepository(t *testing.T) {
 	}
 	if execCalls < 6 {
 		t.Fatalf("too few writes: %d", execCalls)
+	}
+	if len(events) != 3 || events[0].Type != models.ArticleCreated || events[0].AuthorID != "author-1" || events[0].Title != "title" || len(events[0].Tags) != 2 || events[1].Type != models.ArticleUpdated || events[1].Title != "new" || events[2].Type != models.ArticleDeleted {
+		t.Fatalf("article events = %+v", events)
 	}
 
 	if err := s.UpdateArticle("other", id, request); err == nil {
@@ -240,6 +255,7 @@ func TestCreateArticleWithoutAuthorUsername(t *testing.T) {
 func TestInteractionsRepository(t *testing.T) {
 	c := &testConn{}
 	likedRows := int64(0)
+	var events []models.AnalyticsEvent
 	c.query = func(q string, a []driver.NamedValue) (driver.Rows, error) {
 		if has(q, "users") {
 			t.Fatalf("comment read depends on blog users: %s", q)
@@ -247,9 +263,22 @@ func TestInteractionsRepository(t *testing.T) {
 		if has(q, "SELECT COUNT(*)") {
 			return rows([]string{"count"}, []driver.Value{int64(3)}), nil
 		}
+		if has(q, "SELECT author_id") {
+			return rows([]string{"author_id"}, []driver.Value{"article-author"}), nil
+		}
 		return rows([]string{"id", "article_id", "author_id", "username", "content", "created"}, []driver.Value{"c1", "a1", "u1", "alice", "hello", time.Now()}), nil
 	}
 	c.exec = func(q string, a []driver.NamedValue) (driver.Result, error) {
+		if has(q, "INSERT INTO outbox_events") {
+			var event models.AnalyticsEvent
+			if err := json.Unmarshal([]byte(a[3].Value.(string)), &event); err != nil {
+				return nil, err
+			}
+			if a[0].Value != event.ID || a[1].Value != event.Type || a[2].Value != event.ArticleID || event.Version != models.AnalyticsSchemaVersion || event.OccurredAt.IsZero() {
+				return nil, fmt.Errorf("invalid outbox event: %+v", event)
+			}
+			events = append(events, event)
+		}
 		if has(q, "INSERT INTO comments") {
 			if len(a) != 4 || a[1].Value != "u1" || a[2].Value != "alice" || a[3].Value != "hello" {
 				t.Fatalf("unexpected comment insert args: %+v", a)
@@ -277,6 +306,14 @@ func TestInteractionsRepository(t *testing.T) {
 	liked, count, err = s.ToggleLike(id, "u1")
 	if err != nil || liked || count != 3 {
 		t.Fatalf("unlike=%v count=%d err=%v", liked, count, err)
+	}
+	if len(events) != 3 || events[0].Type != models.CommentCreated || events[1].Type != models.ArticleLiked || events[2].Type != models.ArticleUnliked {
+		t.Fatalf("interaction events = %+v", events)
+	}
+	for _, event := range events {
+		if event.AuthorID != "article-author" || event.UserID != "u1" || event.ArticleID != id.String() {
+			t.Fatalf("unexpected interaction event: %+v", event)
+		}
 	}
 
 	c.query = func(string, []driver.NamedValue) (driver.Rows, error) { return nil, errors.New("query") }
