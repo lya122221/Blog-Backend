@@ -49,24 +49,39 @@ func (event Event) Validate() error {
 		return fmt.Errorf("missing event time")
 	}
 
+	var requireAuthor, requireUser, requireVisitor, requireTitle bool
 	switch event.Type {
 	case ArticleImpression, ArticleOpened:
-		if _, err := uuid.Parse(event.VisitorID); err != nil {
-			return fmt.Errorf("invalid visitor ID: %w", err)
-		}
+		requireVisitor = true
 	case ArticleLiked, ArticleUnliked, CommentCreated:
-		if _, err := uuid.Parse(event.UserID); err != nil {
-			return fmt.Errorf("invalid user ID: %w", err)
-		}
+		requireUser = true
 	case ArticleCreated, ArticleUpdated, ArticleDeleted:
-		if _, err := uuid.Parse(event.AuthorID); err != nil {
-			return fmt.Errorf("invalid author ID: %w", err)
-		}
-		if event.Type != ArticleDeleted && strings.TrimSpace(event.Title) == "" {
-			return fmt.Errorf("missing article title")
-		}
+		requireAuthor = true
+		requireTitle = event.Type != ArticleDeleted
 	default:
 		return fmt.Errorf("unsupported event type %q", event.Type)
+	}
+	for _, field := range []struct {
+		name     string
+		id       string
+		required bool
+	}{
+		{"author", event.AuthorID, requireAuthor},
+		{"user", event.UserID, requireUser},
+		{"visitor", event.VisitorID, requireVisitor},
+	} {
+		if field.id == "" {
+			if field.required {
+				return fmt.Errorf("missing %s ID", field.name)
+			}
+			continue
+		}
+		if _, err := uuid.Parse(field.id); err != nil {
+			return fmt.Errorf("invalid %s ID: %w", field.name, err)
+		}
+	}
+	if requireTitle && strings.TrimSpace(event.Title) == "" {
+		return fmt.Errorf("missing article title")
 	}
 
 	return nil

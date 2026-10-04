@@ -55,6 +55,9 @@ func TestValidateRejectsInvalidEvents(t *testing.T) {
 		{"visitor", func(e *Event) { e.VisitorID = "" }, "visitor ID"},
 		{"user", func(e *Event) { e.Type = ArticleLiked; e.UserID = "" }, "user ID"},
 		{"author", func(e *Event) { e.Type = ArticleDeleted; e.AuthorID = "" }, "author ID"},
+		{"optional visitor", func(e *Event) { e.Type = ArticleLiked; e.VisitorID = "bad" }, "visitor ID"},
+		{"optional user", func(e *Event) { e.UserID = "bad" }, "user ID"},
+		{"optional author", func(e *Event) { e.AuthorID = "bad" }, "author ID"},
 		{"title", func(e *Event) { e.Type = ArticleCreated; e.Title = "  " }, "article title"},
 		{"type", func(e *Event) { e.Type = "unknown" }, "event type"},
 	}
