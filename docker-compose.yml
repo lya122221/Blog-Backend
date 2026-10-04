@@ -40,6 +40,71 @@ services:
       timeout: 5s
       retries: 5
 
+  kafka:
+    image: apache/kafka:4.1.2
+    hostname: kafka
+    restart: always
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:19092,CONTROLLER://:29093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:19092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      CLUSTER_ID: 4L6g3nShT-eMCtK--X86sw
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "/opt/kafka/bin/kafka-topics.sh", "--bootstrap-server", "kafka:19092", "--list"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+
+  kafka_init:
+    image: apache/kafka:4.1.2
+    entrypoint: ["/bin/bash", "-ec"]
+    command:
+      - |
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092 --create --if-not-exists --topic "$$KAFKA_TOPIC" --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092 --create --if-not-exists --topic "$$KAFKA_DLQ_TOPIC" --partitions 3 --replication-factor 1
+    environment:
+      KAFKA_TOPIC: ${ANALYTICS_KAFKA_TOPIC:-article-events}
+      KAFKA_DLQ_TOPIC: ${ANALYTICS_KAFKA_DLQ_TOPIC:-article-events.dlq}
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.8
+    restart: always
+    environment:
+      CLICKHOUSE_SKIP_USER_SETUP: "1"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  analytics_migrate:
+    build: ./analytics/migrations
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    command: ["-path=/migrations", "-database=clickhouse://clickhouse:9000?username=default&database=default", "up"]
+
   migrate:
     build: ./blog/migrations
     container_name: blog_migrate
@@ -95,6 +160,27 @@ services:
       auth_migrate:
         condition: service_completed_successfully
 
+  analytics:
+    build: ./analytics
+    restart: always
+    env_file:
+      - ./analytics/.env
+    environment:
+      ANALYTICS_KAFKA_BROKERS: kafka:19092
+      ANALYTICS_KAFKA_TOPIC: ${ANALYTICS_KAFKA_TOPIC:-article-events}
+      ANALYTICS_KAFKA_DLQ_TOPIC: ${ANALYTICS_KAFKA_DLQ_TOPIC:-article-events.dlq}
+      ANALYTICS_CLICKHOUSE_ADDR: clickhouse:9000
+      ANALYTICS_CLICKHOUSE_DATABASE: default
+      ANALYTICS_CLICKHOUSE_USER: default
+      ANALYTICS_CLICKHOUSE_PASSWORD: ""
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+    depends_on:
+      kafka_init:
+        condition: service_completed_successfully
+      analytics_migrate:
+        condition: service_completed_successfully
+
   proxy:
     build: ./proxy
     container_name: blog_proxy
@@ -104,7 +190,10 @@ services:
     depends_on:
       - api
       - auth
+      - analytics
 
 volumes:
   postgres_data:
   auth_postgres_data:
+  kafka_data:
+  clickhouse_data:
