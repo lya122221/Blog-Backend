@@ -19,6 +19,7 @@ type clientStub struct {
 	maxPollRecords   []int
 	committed        [][]*kgo.Record
 	commitErr        error
+	commitErrs       []error
 	onCommit         func()
 	allowedRebalance int
 	closed           bool
@@ -39,6 +40,11 @@ func (client *clientStub) CommitRecords(_ context.Context, records ...*kgo.Recor
 	if client.onCommit != nil {
 		client.onCommit()
 	}
+	if len(client.commitErrs) > 0 {
+		err := client.commitErrs[0]
+		client.commitErrs = client.commitErrs[1:]
+		return err
+	}
 	return client.commitErr
 }
 
@@ -53,6 +59,7 @@ func (client *clientStub) Close() {
 type storeStub struct {
 	batches      [][]models.ArticleEvent
 	err          error
+	errs         []error
 	contextError error
 	onStore      func()
 }
@@ -63,7 +70,34 @@ func (store *storeStub) StoreBatch(ctx context.Context, batch []models.ArticleEv
 	if store.onStore != nil {
 		store.onStore()
 	}
+	if len(store.errs) > 0 {
+		err := store.errs[0]
+		store.errs = store.errs[1:]
+		return err
+	}
 	return store.err
+}
+
+type deadLetterStub struct {
+	records []*kgo.Record
+	reasons []error
+	err     error
+	errs    []error
+	onSend  func()
+}
+
+func (stub *deadLetterStub) Publish(_ context.Context, record *kgo.Record, reason error) error {
+	stub.records = append(stub.records, record)
+	stub.reasons = append(stub.reasons, reason)
+	if stub.onSend != nil {
+		stub.onSend()
+	}
+	if len(stub.errs) > 0 {
+		err := stub.errs[0]
+		stub.errs = stub.errs[1:]
+		return err
+	}
+	return stub.err
 }
 
 func testConsumer(t *testing.T, client *clientStub, store *storeStub, batchSize int, flushInterval time.Duration) *Consumer {
@@ -72,7 +106,10 @@ func testConsumer(t *testing.T, client *clientStub, store *storeStub, batchSize 
 	if err != nil {
 		t.Fatalf("NewEventsService: %v", err)
 	}
-	return &Consumer{client: client, preparer: preparer, store: store, batchSize: batchSize, flushInterval: flushInterval}
+	return &Consumer{
+		client: client, preparer: preparer, store: store, deadLetter: &deadLetterStub{},
+		batchSize: batchSize, flushInterval: flushInterval, retryAttempts: 3, retryBackoff: time.Millisecond,
+	}
 }
 
 func testRecord(t *testing.T, offset int64) *kgo.Record {
@@ -184,37 +221,122 @@ func TestRunDoesNotCommitWhenStoreFails(t *testing.T) {
 	}
 }
 
-func TestRunReturnsInvalidRecordsWithoutCommit(t *testing.T) {
+func TestRunPublishesInvalidRecordsToDLQ(t *testing.T) {
 	for name, value := range map[string][]byte{
 		"invalid JSON":  []byte("{"),
 		"invalid event": []byte(`{"version":1,"event_id":"bad"}`),
 	} {
 		t.Run(name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
 			record := &kgo.Record{Topic: "article-events", Partition: 2, Offset: 8, Value: value}
 			client := &clientStub{polls: []func(context.Context) kgo.Fetches{
 				func(context.Context) kgo.Fetches { return fetched(record) },
-			}}
+			}, onCommit: cancel}
 			store := &storeStub{}
-			err := testConsumer(t, client, store, 1, time.Second).Run(context.Background())
+			consumer := testConsumer(t, client, store, 1, time.Second)
+			deadLetter := consumer.deadLetter.(*deadLetterStub)
+			err := consumer.Run(ctx)
 			var invalid *InvalidRecordError
-			if !errors.As(err, &invalid) || invalid.Record != record || len(store.batches) != 0 || len(client.committed) != 0 {
-				t.Fatalf("Run error=%v, stored=%d, commits=%d", err, len(store.batches), len(client.committed))
+			if err != nil || len(deadLetter.records) != 1 || deadLetter.records[0] != record || !errors.As(deadLetter.reasons[0], &invalid) || invalid.Record != record || len(store.batches) != 0 || len(client.committed) != 1 || client.committed[0][0] != record {
+				t.Fatalf("Run error=%v, DLQ=%d, stored=%d, commits=%d", err, len(deadLetter.records), len(store.batches), len(client.committed))
 			}
 		})
 	}
 }
 
-func TestRunDoesNotStoreOrCommitBatchWithInvalidRecord(t *testing.T) {
+func TestRunStoresValidRecordsAroundInvalidRecord(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	valid := testRecord(t, 7)
+	invalid := &kgo.Record{Topic: "article-events", Partition: 0, Offset: 8, Value: []byte("{")}
+	after := testRecord(t, 9)
+	var calls []string
+	client := &clientStub{polls: []func(context.Context) kgo.Fetches{
+		func(context.Context) kgo.Fetches { return fetched(valid, invalid, after) },
+		func(context.Context) kgo.Fetches {
+			cancel()
+			return kgo.NewErrFetch(context.Canceled)
+		},
+	}, onCommit: func() { calls = append(calls, "commit") }}
+	store := &storeStub{onStore: func() { calls = append(calls, "store") }}
+	consumer := testConsumer(t, client, store, 3, time.Second)
+	deadLetter := consumer.deadLetter.(*deadLetterStub)
+	deadLetter.onSend = func() { calls = append(calls, "DLQ") }
+	if err := consumer.Run(ctx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(store.batches) != 2 || len(store.batches[0]) != 1 || len(store.batches[1]) != 1 || len(deadLetter.records) != 1 || deadLetter.records[0] != invalid || len(client.committed) != 3 {
+		t.Fatalf("stored=%d, DLQ=%d, commits=%d", len(store.batches), len(deadLetter.records), len(client.committed))
+	}
+	if client.committed[0][0] != valid || client.committed[1][0] != invalid || client.committed[2][0] != after {
+		t.Fatalf("committed records = %+v", client.committed)
+	}
+	want := []string{"store", "commit", "DLQ", "commit", "store", "commit"}
+	if len(calls) != len(want) {
+		t.Fatalf("order = %v", calls)
+	}
+	for index := range want {
+		if calls[index] != want[index] {
+			t.Fatalf("order = %v, want %v", calls, want)
+		}
+	}
+}
+
+func TestRunDoesNotCommitInvalidRecordWhenDLQFails(t *testing.T) {
+	failure := errors.New("DLQ unavailable")
 	valid := testRecord(t, 7)
 	invalid := &kgo.Record{Topic: "article-events", Partition: 0, Offset: 8, Value: []byte("{")}
 	client := &clientStub{polls: []func(context.Context) kgo.Fetches{
 		func(context.Context) kgo.Fetches { return fetched(valid, invalid) },
 	}}
 	store := &storeStub{}
-	err := testConsumer(t, client, store, 2, time.Second).Run(context.Background())
-	var invalidRecord *InvalidRecordError
-	if !errors.As(err, &invalidRecord) || invalidRecord.Record != invalid || len(store.batches) != 0 || len(client.committed) != 0 {
-		t.Fatalf("Run error=%v, stored=%d, commits=%d", err, len(store.batches), len(client.committed))
+	consumer := testConsumer(t, client, store, 2, time.Second)
+	deadLetter := consumer.deadLetter.(*deadLetterStub)
+	deadLetter.err = failure
+	err := consumer.Run(context.Background())
+	if !errors.Is(err, failure) || len(deadLetter.records) != 3 || len(store.batches) != 1 || len(client.committed) != 1 || client.committed[0][0] != valid {
+		t.Fatalf("Run error=%v, DLQ=%d, stored=%d, commits=%d", err, len(deadLetter.records), len(store.batches), len(client.committed))
+	}
+}
+
+func TestRunRetriesTemporaryStoreCommitAndDLQFailures(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	failure := errors.New("temporary failure")
+	valid := testRecord(t, 7)
+	invalid := &kgo.Record{Topic: "article-events", Partition: 0, Offset: 8, Value: []byte("{")}
+	client := &clientStub{polls: []func(context.Context) kgo.Fetches{
+		func(context.Context) kgo.Fetches { return fetched(valid, invalid) },
+	}, commitErrs: []error{failure, nil, failure, nil}}
+	client.onCommit = func() {
+		if len(client.committed) == 4 {
+			cancel()
+		}
+	}
+	store := &storeStub{errs: []error{failure, nil}}
+	consumer := testConsumer(t, client, store, 2, time.Second)
+	deadLetter := consumer.deadLetter.(*deadLetterStub)
+	deadLetter.errs = []error{failure, nil}
+	if err := consumer.Run(ctx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(store.batches) != 2 || len(deadLetter.records) != 2 || len(client.committed) != 4 || client.committed[3][0] != invalid {
+		t.Fatalf("stored=%d, DLQ=%d, commits=%d", len(store.batches), len(deadLetter.records), len(client.committed))
+	}
+}
+
+func TestRetryStopsWhenContextIsCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	consumer := &Consumer{retryAttempts: 3, retryBackoff: time.Second}
+	attempts := 0
+	err := consumer.retry(ctx, "store batch", func() error {
+		attempts++
+		cancel()
+		return errors.New("temporary failure")
+	})
+	if !errors.Is(err, context.Canceled) || attempts != 1 {
+		t.Fatalf("retry error=%v, attempts=%d", err, attempts)
 	}
 }
 

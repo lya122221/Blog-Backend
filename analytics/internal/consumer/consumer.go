@@ -22,6 +22,10 @@ type BatchStore interface {
 	StoreBatch(context.Context, []models.ArticleEvent) error
 }
 
+type DeadLetterPublisher interface {
+	Publish(context.Context, *kgo.Record, error) error
+}
+
 type kafkaClient interface {
 	PollRecords(context.Context, int) kgo.Fetches
 	CommitRecords(context.Context, ...*kgo.Record) error
@@ -46,11 +50,14 @@ type Consumer struct {
 	client        kafkaClient
 	preparer      EventPreparer
 	store         BatchStore
+	deadLetter    DeadLetterPublisher
 	batchSize     int
 	flushInterval time.Duration
+	retryAttempts int
+	retryBackoff  time.Duration
 }
 
-func NewConsumer(settings config.Config, preparer EventPreparer, store BatchStore) (*Consumer, error) {
+func NewConsumer(settings config.Config, preparer EventPreparer, store BatchStore, deadLetter DeadLetterPublisher) (*Consumer, error) {
 	client, err := kgo.NewClient(
 		kgo.SeedBrokers(settings.KafkaBrokers...),
 		kgo.ConsumeTopics(settings.KafkaTopic),
@@ -65,8 +72,11 @@ func NewConsumer(settings config.Config, preparer EventPreparer, store BatchStor
 		client:        client,
 		preparer:      preparer,
 		store:         store,
+		deadLetter:    deadLetter,
 		batchSize:     settings.BatchSize,
 		flushInterval: settings.FlushInterval,
+		retryAttempts: settings.RetryAttempts,
+		retryBackoff:  settings.RetryBackoff,
 	}, nil
 }
 
@@ -101,12 +111,29 @@ func (consumer *Consumer) Run(ctx context.Context) error {
 		}
 		for _, record := range fetches.Records() {
 			var event models.Event
-			if err := json.Unmarshal(record.Value, &event); err != nil {
-				return &InvalidRecordError{Record: record, Err: err}
+			eventErr := json.Unmarshal(record.Value, &event)
+			var prepared models.ArticleEvent
+			if eventErr == nil {
+				prepared, eventErr = consumer.preparer.PrepareEvent(event)
 			}
-			prepared, err := consumer.preparer.PrepareEvent(event)
-			if err != nil {
-				return &InvalidRecordError{Record: record, Err: err}
+			if eventErr != nil {
+				if len(records) > 0 {
+					if err := consumer.flushPending(ctx, records, batch); err != nil {
+						return err
+					}
+					records = nil
+					batch = nil
+				}
+				invalid := &InvalidRecordError{Record: record, Err: eventErr}
+				if err := consumer.retry(ctx, "publish invalid Kafka record to DLQ", func() error {
+					return consumer.deadLetter.Publish(ctx, record, invalid)
+				}); err != nil {
+					return err
+				}
+				if err := consumer.commit(ctx, record); err != nil {
+					return err
+				}
+				continue
 			}
 			if len(records) == 0 {
 				flushAt = time.Now().Add(consumer.flushInterval)
@@ -115,13 +142,24 @@ func (consumer *Consumer) Run(ctx context.Context) error {
 			batch = append(batch, prepared)
 		}
 		if len(records) > 0 && (timedOut || len(records) >= consumer.batchSize || !time.Now().Before(flushAt)) {
-			if err := consumer.flush(ctx, records, batch); err != nil {
+			if err := consumer.flushPending(ctx, records, batch); err != nil {
 				return err
 			}
 			records = nil
 			batch = nil
 		}
+		if len(records) == 0 {
+			consumer.client.AllowRebalance()
+		}
 	}
+}
+
+func (consumer *Consumer) flushPending(ctx context.Context, records []*kgo.Record, batch []models.ArticleEvent) error {
+	err := consumer.flush(ctx, records, batch)
+	if err != nil && ctx.Err() != nil {
+		return consumer.flushOnShutdown(ctx, records, batch)
+	}
+	return err
 }
 
 func (consumer *Consumer) flushOnShutdown(ctx context.Context, records []*kgo.Record, batch []models.ArticleEvent) error {
@@ -134,14 +172,41 @@ func (consumer *Consumer) flushOnShutdown(ctx context.Context, records []*kgo.Re
 }
 
 func (consumer *Consumer) flush(ctx context.Context, records []*kgo.Record, batch []models.ArticleEvent) error {
-	if err := consumer.store.StoreBatch(ctx, batch); err != nil {
-		return fmt.Errorf("store Kafka events in ClickHouse: %w", err)
+	if err := consumer.retry(ctx, "store Kafka events in ClickHouse", func() error {
+		return consumer.store.StoreBatch(ctx, batch)
+	}); err != nil {
+		return err
 	}
-	if err := consumer.client.CommitRecords(ctx, records...); err != nil {
-		return fmt.Errorf("commit Kafka records: %w", err)
+	return consumer.commit(ctx, records...)
+}
+
+func (consumer *Consumer) commit(ctx context.Context, records ...*kgo.Record) error {
+	return consumer.retry(ctx, "commit Kafka records", func() error {
+		return consumer.client.CommitRecords(ctx, records...)
+	})
+}
+
+func (consumer *Consumer) retry(ctx context.Context, operation string, run func() error) error {
+	var err error
+	for attempt := 1; attempt <= consumer.retryAttempts; attempt++ {
+		if ctx.Err() != nil {
+			return fmt.Errorf("%s: %w", operation, ctx.Err())
+		}
+		if err = run(); err == nil {
+			return nil
+		}
+		if attempt == consumer.retryAttempts {
+			break
+		}
+		timer := time.NewTimer(consumer.retryBackoff * time.Duration(1<<(attempt-1)))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return fmt.Errorf("%s: %w", operation, ctx.Err())
+		case <-timer.C:
+		}
 	}
-	consumer.client.AllowRebalance()
-	return nil
+	return fmt.Errorf("%s after %d attempts: %w", operation, consumer.retryAttempts, err)
 }
 
 func (consumer *Consumer) Close() {

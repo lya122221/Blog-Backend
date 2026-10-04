@@ -14,9 +14,12 @@ type Config struct {
 	LogFormat     string
 	KafkaBrokers  []string
 	KafkaTopic    string
+	KafkaDLQTopic string
 	KafkaGroup    string
 	BatchSize     int
 	FlushInterval time.Duration
+	RetryAttempts int
+	RetryBackoff  time.Duration
 	CookieSecure  bool
 	ClickHouse    ClickHouseConfig
 }
@@ -41,6 +44,10 @@ func Load() (Config, error) {
 	if config.KafkaTopic == "" {
 		return Config{}, fmt.Errorf("missing ANALYTICS_KAFKA_TOPIC")
 	}
+	config.KafkaDLQTopic = strings.TrimSpace(os.Getenv("ANALYTICS_KAFKA_DLQ_TOPIC"))
+	if config.KafkaDLQTopic == "" || config.KafkaDLQTopic == config.KafkaTopic {
+		return Config{}, fmt.Errorf("invalid ANALYTICS_KAFKA_DLQ_TOPIC %q", config.KafkaDLQTopic)
+	}
 	config.KafkaGroup = strings.TrimSpace(os.Getenv("ANALYTICS_KAFKA_CONSUMER_GROUP"))
 	if config.KafkaGroup == "" {
 		return Config{}, fmt.Errorf("missing ANALYTICS_KAFKA_CONSUMER_GROUP")
@@ -63,6 +70,18 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("invalid ANALYTICS_KAFKA_FLUSH_INTERVAL %q", flushText)
 	}
 	config.FlushInterval = flushInterval
+	retryAttemptsText := strings.TrimSpace(os.Getenv("ANALYTICS_RETRY_ATTEMPTS"))
+	retryAttempts, err := strconv.Atoi(retryAttemptsText)
+	if err != nil || retryAttempts < 1 || retryAttempts > 5 {
+		return Config{}, fmt.Errorf("invalid ANALYTICS_RETRY_ATTEMPTS %q", retryAttemptsText)
+	}
+	config.RetryAttempts = retryAttempts
+	retryBackoffText := strings.TrimSpace(os.Getenv("ANALYTICS_RETRY_BACKOFF"))
+	retryBackoff, err := time.ParseDuration(retryBackoffText)
+	if err != nil || retryBackoff <= 0 || retryBackoff > time.Second {
+		return Config{}, fmt.Errorf("invalid ANALYTICS_RETRY_BACKOFF %q", retryBackoffText)
+	}
+	config.RetryBackoff = retryBackoff
 	if value := os.Getenv("ANALYTICS_COOKIE_SECURE"); value != "" {
 		cookieSecure, err := strconv.ParseBool(value)
 		if err != nil {

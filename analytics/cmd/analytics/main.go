@@ -63,7 +63,12 @@ func run() error {
 			appLogger.Error("close ClickHouse connection", "error", err)
 		}
 	}()
-	worker, err := consumer.NewConsumer(settings, eventsService, storage)
+	deadLetter, err := producer.NewDeadLetter(settings.KafkaBrokers, settings.KafkaDLQTopic)
+	if err != nil {
+		return fmt.Errorf("configure Kafka DLQ producer: %w", err)
+	}
+	defer deadLetter.Close()
+	worker, err := consumer.NewConsumer(settings, eventsService, storage, deadLetter)
 	if err != nil {
 		return fmt.Errorf("configure Kafka consumer: %w", err)
 	}
