@@ -85,6 +85,7 @@ jobs:
         working-directory: ${{ matrix.service }}
 
       - name: Check test coverage
+        if: matrix.service != 'analytics'
         shell: bash
         working-directory: ${{ matrix.service }}
         run: |
@@ -101,6 +102,7 @@ jobs:
           }'
 
       - name: Upload coverage report
+        if: matrix.service != 'analytics'
         uses: actions/upload-artifact@v5
         with:
           name: coverage-report-${{ matrix.service }}
@@ -114,12 +116,174 @@ jobs:
       - name: Build Docker image
         run: docker build --tag ${{ matrix.service }}:ci ./${{ matrix.service }}
 
+  analytics-integration:
+    name: Analytics integration and coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:25.8
+        env:
+          CLICKHOUSE_SKIP_USER_SETUP: "1"
+        ports:
+          - 9000:9000
+        options: >-
+          --health-cmd "clickhouse-client --query 'SELECT 1'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      ANALYTICS_TEST_CLICKHOUSE_ADDR: 127.0.0.1:9000
+      ANALYTICS_TEST_CLICKHOUSE_DATABASE: default
+      ANALYTICS_TEST_CLICKHOUSE_USER: default
+      ANALYTICS_TEST_REDIS_ADDR: 127.0.0.1:6379
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: analytics/go.mod
+          cache-dependency-path: analytics/go.sum
+
+      - name: Run analytics tests with storage services
+        run: go test -race ./... -count=1 -covermode=atomic -coverprofile=coverage.out
+        working-directory: analytics
+
+      - name: Check analytics coverage
+        shell: bash
+        working-directory: analytics
+        run: |
+          coverage="$(go tool cover -func=coverage.out | awk '/^total:/ {gsub("%", "", $3); print $3}')"
+          minimum="70"
+          echo "analytics coverage: ${coverage}%"
+          echo "### analytics coverage: ${coverage}%" >> "$GITHUB_STEP_SUMMARY"
+          awk -v coverage="$coverage" -v minimum="$minimum" 'BEGIN {
+            if (coverage + 0 < minimum + 0) {
+              printf "Coverage %.1f%% is below the required %.1f%%\n", coverage, minimum
+              exit 1
+            }
+          }'
+
+      - name: Upload analytics coverage report
+        uses: actions/upload-artifact@v5
+        with:
+          name: coverage-report-analytics
+          path: analytics/coverage.out
+          retention-days: 14
+
+  blog-integration:
+    name: Blog integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: blog_ci
+          POSTGRES_PASSWORD: ci_password
+          POSTGRES_DB: blog_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U blog_ci -d blog_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+      kafka:
+        image: apache/kafka:4.1.2
+        env:
+          KAFKA_NODE_ID: "1"
+          KAFKA_PROCESS_ROLES: broker,controller
+          KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+          KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+          KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+          KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+          KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+          KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+          KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+          KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+          KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+          KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR: "1"
+          KAFKA_SHARE_COORDINATOR_STATE_TOPIC_MIN_ISR: "1"
+          KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+          CLUSTER_ID: 4L6g3nShT-eMCtK--X86sw
+        ports:
+          - 9092:9092
+        options: >-
+          --health-cmd "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 12
+          --health-start-period 30s
+    env:
+      BLOG_TEST_POSTGRES_DSN: postgres://blog_ci:ci_password@127.0.0.1:5432/blog_ci?sslmode=disable
+      BLOG_TEST_KAFKA_BROKERS: 127.0.0.1:9092
+      BLOG_TEST_KAFKA_TOPIC: ci-article-events
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: blog/go.mod
+          cache-dependency-path: blog/go.sum
+
+      - name: Create Kafka topic
+        run: >-
+          docker exec ${{ job.services.kafka.id }}
+          /opt/kafka/bin/kafka-topics.sh
+          --bootstrap-server localhost:9092
+          --create --if-not-exists
+          --topic "$BLOG_TEST_KAFKA_TOPIC"
+          --partitions 3
+          --replication-factor 1
+
+      - name: Run blog integration tests
+        run: go test -race ./... -count=1
+        working-directory: blog
+
+  proxy:
+    name: Build and validate Nginx proxy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Build proxy image
+        run: docker build --tag blog-proxy:ci ./proxy
+
+      - name: Check Nginx configuration
+        run: >-
+          docker run --rm
+          --add-host auth:127.0.0.1
+          --add-host analytics:127.0.0.1
+          --add-host api:127.0.0.1
+          blog-proxy:ci nginx -t
+
   publish:
     name: Publish (${{ matrix.service }})
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     needs:
       - lint
       - test
+      - analytics-integration
+      - blog-integration
+      - proxy
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -131,6 +295,9 @@ jobs:
           - service: auth
             image_suffix: -auth
             cache_scope: blog-auth
+          - service: analytics
+            image_suffix: -analytics
+            cache_scope: blog-analytics
     permissions:
       contents: read
       packages: write
