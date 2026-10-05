@@ -1,9 +1,11 @@
 package main
 
 import (
+	"blog/internal/config"
 	"blog/internal/handlers"
 	applog "blog/internal/logger"
 	"blog/internal/middleware"
+	"blog/internal/producer"
 	"blog/internal/repositories"
 	"blog/internal/services"
 	"blog/internal/workers"
@@ -44,6 +46,10 @@ func run() (runErr error) {
 	if err != nil {
 		return fmt.Errorf("configure JWT middleware: %w", err)
 	}
+	outboxConfig, err := config.LoadOutbox()
+	if err != nil {
+		return fmt.Errorf("configure outbox: %w", err)
+	}
 
 	pgHost := os.Getenv("POSTGRES_HOST")
 	if pgHost == "" {
@@ -73,6 +79,11 @@ func run() (runErr error) {
 			logger.Info("application stopped")
 		}
 	}()
+	outboxProducer, err := producer.NewProducer(outboxConfig.KafkaBrokers, outboxConfig.KafkaTopic)
+	if err != nil {
+		return fmt.Errorf("create outbox producer: %w", err)
+	}
+	defer outboxProducer.Close()
 
 	r := gin.New()
 	r.Use(middleware.RequestLogger(logger), middleware.Recovery(logger))
@@ -103,10 +114,15 @@ func run() (runErr error) {
 	}
 
 	workerCtx, stopWorker := context.WithCancel(context.Background())
-	workerDone := make(chan error, 1)
+	viewsWorkerDone := make(chan error, 1)
+	outboxWorkerDone := make(chan error, 1)
 
 	go func() {
-		workerDone <- workers.StartViewsUpdaterWorker(workerCtx, storage)
+		viewsWorkerDone <- workers.StartViewsUpdaterWorker(workerCtx, storage)
+	}()
+	outboxWorker := workers.NewOutboxWorker(storage, outboxProducer, logger, outboxConfig)
+	go func() {
+		outboxWorkerDone <- outboxWorker.Run(workerCtx)
 	}()
 
 	server := &http.Server{
@@ -139,7 +155,9 @@ func run() (runErr error) {
 	}
 
 	stopWorker()
-	runErr = errors.Join(runErr, waitForWorker(workerDone, 5*time.Second))
+	workersDeadline := time.Now().Add(10 * time.Second)
+	runErr = errors.Join(runErr, waitForWorker("views updater", viewsWorkerDone, time.Until(workersDeadline)))
+	runErr = errors.Join(runErr, waitForWorker("outbox publisher", outboxWorkerDone, time.Until(workersDeadline)))
 
 	return runErr
 }
@@ -168,17 +186,17 @@ func shutdownHTTPServer(server gracefulHTTPServer, serverDone <-chan error, time
 	return resultErr
 }
 
-func waitForWorker(workerDone <-chan error, timeout time.Duration) error {
+func waitForWorker(name string, workerDone <-chan error, timeout time.Duration) error {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 
 	select {
 	case err := <-workerDone:
 		if err != nil {
-			return fmt.Errorf("stop views updater: %w", err)
+			return fmt.Errorf("stop %s: %w", name, err)
 		}
 		return nil
 	case <-timer.C:
-		return errors.New("timed out waiting for views updater")
+		return fmt.Errorf("timed out waiting for %s", name)
 	}
 }

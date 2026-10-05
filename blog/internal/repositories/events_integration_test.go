@@ -77,6 +77,18 @@ func TestArticleEventsPostgres(t *testing.T) {
 			t.Fatalf("apply outbox migration: %v", err)
 		}
 	}
+	orderMigration, err := os.ReadFile("../../migrations/000011_order_outbox_events.up.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range strings.Split(string(orderMigration), ";") {
+		if strings.TrimSpace(statement) == "" {
+			continue
+		}
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatalf("apply ordered outbox migration: %v", err)
+		}
+	}
 	for _, statement := range []string{
 		`CREATE FUNCTION reject_outbox_insert() RETURNS trigger LANGUAGE plpgsql AS $$
 		BEGIN

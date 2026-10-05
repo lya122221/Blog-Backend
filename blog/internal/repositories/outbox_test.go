@@ -29,12 +29,17 @@ func TestOutboxRepository(t *testing.T) {
 				return nil, fmt.Errorf("publish query = %s, args = %v", q, args)
 			}
 			return driver.RowsAffected(1), nil
+		case has(q, "DELETE FROM outbox_events"):
+			if len(args) != 2 || args[0].Value != publishedAt || fmt.Sprint(args[1].Value) != "10" {
+				return nil, fmt.Errorf("cleanup args = %v", args)
+			}
+			return driver.RowsAffected(2), nil
 		default:
 			return nil, fmt.Errorf("unexpected exec: %s", q)
 		}
 	}
 	c.query = func(q string, args []driver.NamedValue) (driver.Rows, error) {
-		if !has(q, "FOR UPDATE SKIP LOCKED") || !has(q, "WHERE published_at IS NULL") || len(args) != 1 || fmt.Sprint(args[0].Value) != "10" {
+		if !has(q, "FOR UPDATE OF e SKIP LOCKED") || !has(q, "earlier.position < e.position") || !has(q, "ORDER BY e.position") || len(args) != 1 || fmt.Sprint(args[0].Value) != "10" {
 			return nil, fmt.Errorf("pending query = %s, args = %v", q, args)
 		}
 		return rows(
@@ -43,7 +48,7 @@ func TestOutboxRepository(t *testing.T) {
 		), nil
 	}
 	s := &Storage{db: openTestDB(t, c)}
-	tx, err := s.db.BeginTx(context.Background(), nil)
+	tx, err := s.BeginOutboxTx(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,6 +63,13 @@ func TestOutboxRepository(t *testing.T) {
 	}
 	if err := s.MarkOutboxEventPublished(context.Background(), tx, id, publishedAt); err != nil {
 		t.Fatalf("MarkOutboxEventPublished: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	deleted, err := s.DeletePublishedOutboxEventsBefore(context.Background(), publishedAt, 10)
+	if err != nil || deleted != 2 {
+		t.Fatalf("DeletePublishedOutboxEventsBefore = %d, %v", deleted, err)
 	}
 }
 
@@ -88,6 +100,12 @@ func TestOutboxRepositoryValidation(t *testing.T) {
 	}
 	if _, err := s.ReadPendingOutboxEvents(context.Background(), tx, 0); err == nil {
 		t.Fatal("expected invalid limit error")
+	}
+	if _, err := s.DeletePublishedOutboxEventsBefore(context.Background(), time.Time{}, 1); err == nil {
+		t.Fatal("expected invalid cleanup boundary error")
+	}
+	if _, err := s.DeletePublishedOutboxEventsBefore(context.Background(), time.Now(), 0); err == nil {
+		t.Fatal("expected invalid cleanup limit error")
 	}
 }
 

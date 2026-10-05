@@ -35,12 +35,19 @@ func (s *Storage) ReadPendingOutboxEvents(ctx context.Context, tx *sql.Tx, limit
 		return nil, errors.New("outbox limit must be positive")
 	}
 	rows, err := tx.QueryContext(ctx, `
-		SELECT event_id, event_type, article_id, payload, created_at
-		FROM outbox_events	
-		WHERE published_at IS NULL
-		ORDER BY created_at, event_id
+		SELECT e.event_id, e.event_type, e.article_id, e.payload, e.created_at
+		FROM outbox_events AS e
+		WHERE e.published_at IS NULL
+		  AND NOT EXISTS (
+			SELECT 1
+			FROM outbox_events AS earlier
+			WHERE earlier.article_id = e.article_id
+			  AND earlier.published_at IS NULL
+			  AND earlier.position < e.position
+		  )
+		ORDER BY e.position
 		LIMIT $1
-		FOR UPDATE SKIP LOCKED
+		FOR UPDATE OF e SKIP LOCKED
 	`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("read pending outbox events: %w", err)
@@ -59,6 +66,14 @@ func (s *Storage) ReadPendingOutboxEvents(ctx context.Context, tx *sql.Tx, limit
 		return nil, fmt.Errorf("iterate pending outbox events: %w", err)
 	}
 	return events, nil
+}
+
+func (s *Storage) BeginOutboxTx(ctx context.Context) (*sql.Tx, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin outbox transaction: %w", err)
+	}
+	return tx, nil
 }
 
 func (s *Storage) MarkOutboxEventPublished(ctx context.Context, tx *sql.Tx, eventID string, publishedAt time.Time) error {
@@ -84,4 +99,29 @@ func (s *Storage) MarkOutboxEventPublished(ctx context.Context, tx *sql.Tx, even
 		return fmt.Errorf("outbox event %s is not pending", eventID)
 	}
 	return nil
+}
+
+func (s *Storage) DeletePublishedOutboxEventsBefore(ctx context.Context, before time.Time, limit int) (int64, error) {
+	if before.IsZero() || limit < 1 {
+		return 0, errors.New("invalid outbox cleanup boundary or limit")
+	}
+	result, err := s.db.ExecContext(ctx, `
+		WITH expired AS (
+			SELECT event_id FROM outbox_events
+			WHERE published_at < $1
+			ORDER BY published_at
+			LIMIT $2
+			FOR UPDATE SKIP LOCKED
+		)
+		DELETE FROM outbox_events
+		WHERE event_id IN (SELECT event_id FROM expired)
+	`, before, limit)
+	if err != nil {
+		return 0, fmt.Errorf("delete published outbox events: %w", err)
+	}
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("count deleted outbox events: %w", err)
+	}
+	return deleted, nil
 }
