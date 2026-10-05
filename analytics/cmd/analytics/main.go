@@ -133,7 +133,7 @@ func serveAnalytics(ctx context.Context, server *http.Server, listener net.Liste
 		return errors.Join(httpErr, <-workerDone)
 	case workerErr := <-workerDone:
 		if workerErr == nil && ctx.Err() == nil {
-			workerErr = errors.New("Kafka consumer stopped unexpectedly")
+			workerErr = errors.New("kafka consumer stopped unexpectedly")
 		}
 		cancel()
 		return errors.Join(workerErr, <-httpDone)
