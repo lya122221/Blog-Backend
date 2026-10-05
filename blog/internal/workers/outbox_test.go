@@ -24,7 +24,7 @@ type outboxTestConnector struct{ state *outboxTxState }
 func (c outboxTestConnector) Connect(context.Context) (driver.Conn, error) {
 	return &outboxTestConn{state: c.state}, nil
 }
-func (c outboxTestConnector) Driver() driver.Driver { return outboxTestDriver{state: c.state} }
+func (c outboxTestConnector) Driver() driver.Driver { return outboxTestDriver(c) }
 
 type outboxTxState struct {
 	commits, rollbacks int

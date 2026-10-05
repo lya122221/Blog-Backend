@@ -52,7 +52,7 @@ func TestOutboxRepository(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	event := models.OutboxEvent{ID: id, Type: "article.created", ArticleID: articleID, Payload: payload}
 	if err := s.InsertOutboxEvent(context.Background(), tx, event); err != nil {
 		t.Fatalf("InsertOutboxEvent: %v", err)
@@ -91,7 +91,7 @@ func TestOutboxRepositoryValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if err := s.MarkOutboxEventPublished(context.Background(), tx, "id", time.Time{}); err == nil {
 		t.Fatal("expected missing publication time error")
 	}
@@ -116,7 +116,7 @@ func TestOutboxRepositoryErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	c.exec = func(string, []driver.NamedValue) (driver.Result, error) {
 		return nil, errors.New("database unavailable")
 	}

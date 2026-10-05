@@ -122,7 +122,7 @@ func TestOutboxPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer firstTx.Rollback()
+	defer func() { _ = firstTx.Rollback() }()
 	first, err := s.ReadPendingOutboxEvents(ctx, firstTx, 10)
 	if err != nil || len(first) != 1 || first[0].ID != event.ID {
 		t.Fatalf("first claim = %+v, %v", first, err)
@@ -131,7 +131,7 @@ func TestOutboxPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer secondTx.Rollback()
+	defer func() { _ = secondTx.Rollback() }()
 	readCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	second, err := s.ReadPendingOutboxEvents(readCtx, secondTx, 10)
@@ -180,7 +180,7 @@ func TestOutboxPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer orderedTx.Rollback()
+	defer func() { _ = orderedTx.Rollback() }()
 	ordered, err := s.ReadPendingOutboxEvents(ctx, orderedTx, 10)
 	if err != nil || len(ordered) != 2 || ordered[0].ID != secondEvent.ID || ordered[1].ID != otherArticle.ID {
 		t.Fatalf("ordered pending events = %+v, err = %v", ordered, err)
@@ -189,7 +189,7 @@ func TestOutboxPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer concurrentTx.Rollback()
+	defer func() { _ = concurrentTx.Rollback() }()
 	concurrent, err := s.ReadPendingOutboxEvents(ctx, concurrentTx, 10)
 	if err != nil || len(concurrent) != 0 {
 		t.Fatalf("concurrent worker bypassed pending article event: %+v, %v", concurrent, err)
