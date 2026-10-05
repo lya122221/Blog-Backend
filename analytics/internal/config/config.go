@@ -21,6 +21,7 @@ type Config struct {
 	RetryAttempts int
 	RetryBackoff  time.Duration
 	CookieSecure  bool
+	RedisAddr     string
 	ClickHouse    ClickHouseConfig
 }
 
@@ -82,6 +83,10 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("invalid ANALYTICS_RETRY_BACKOFF %q", retryBackoffText)
 	}
 	config.RetryBackoff = retryBackoff
+	config.RedisAddr = strings.TrimSpace(os.Getenv("ANALYTICS_REDIS_ADDR"))
+	if config.RedisAddr == "" {
+		return Config{}, fmt.Errorf("missing ANALYTICS_REDIS_ADDR")
+	}
 	if value := os.Getenv("ANALYTICS_COOKIE_SECURE"); value != "" {
 		cookieSecure, err := strconv.ParseBool(value)
 		if err != nil {

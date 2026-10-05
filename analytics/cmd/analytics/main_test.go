@@ -30,6 +30,7 @@ func TestRunRejectsInvalidConfiguration(t *testing.T) {
 	t.Setenv("ANALYTICS_KAFKA_FLUSH_INTERVAL", "1s")
 	t.Setenv("ANALYTICS_RETRY_ATTEMPTS", "3")
 	t.Setenv("ANALYTICS_RETRY_BACKOFF", "100ms")
+	t.Setenv("ANALYTICS_REDIS_ADDR", "localhost:6379")
 	t.Setenv("ANALYTICS_CLICKHOUSE_ADDR", "localhost:9000")
 	t.Setenv("ANALYTICS_CLICKHOUSE_DATABASE", "default")
 	t.Setenv("ANALYTICS_CLICKHOUSE_USER", "default")

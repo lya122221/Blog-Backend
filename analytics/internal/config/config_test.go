@@ -17,6 +17,7 @@ func setRequiredSettings(t *testing.T) {
 	t.Setenv("ANALYTICS_KAFKA_FLUSH_INTERVAL", "1s")
 	t.Setenv("ANALYTICS_RETRY_ATTEMPTS", "3")
 	t.Setenv("ANALYTICS_RETRY_BACKOFF", "100ms")
+	t.Setenv("ANALYTICS_REDIS_ADDR", "localhost:6379")
 	t.Setenv("ANALYTICS_CLICKHOUSE_ADDR", "localhost:9000")
 	t.Setenv("ANALYTICS_CLICKHOUSE_DATABASE", "default")
 	t.Setenv("ANALYTICS_CLICKHOUSE_USER", "default")
@@ -45,6 +46,9 @@ func TestLoadRequiredSettingsAndOptionalDefaults(t *testing.T) {
 	if settings.ClickHouse.Addr != "localhost:9000" || settings.ClickHouse.Database != "default" || settings.ClickHouse.User != "default" {
 		t.Fatalf("unexpected ClickHouse settings: %+v", settings.ClickHouse)
 	}
+	if settings.RedisAddr != "localhost:6379" {
+		t.Fatalf("unexpected Redis address: %q", settings.RedisAddr)
+	}
 }
 
 func TestLoadCustomSettings(t *testing.T) {
@@ -61,6 +65,7 @@ func TestLoadCustomSettings(t *testing.T) {
 	t.Setenv("ANALYTICS_RETRY_ATTEMPTS", "5")
 	t.Setenv("ANALYTICS_RETRY_BACKOFF", "25ms")
 	t.Setenv("ANALYTICS_COOKIE_SECURE", "true")
+	t.Setenv("ANALYTICS_REDIS_ADDR", "redis:6379")
 
 	settings, err := Load()
 	if err != nil {
@@ -74,6 +79,17 @@ func TestLoadCustomSettings(t *testing.T) {
 	}
 	if settings.KafkaDLQTopic != "views.dlq" || settings.KafkaGroup != "custom-consumer" || settings.BatchSize != 100 || settings.FlushInterval != 250*time.Millisecond || settings.RetryAttempts != 5 || settings.RetryBackoff != 25*time.Millisecond {
 		t.Fatalf("unexpected consumer settings: %+v", settings)
+	}
+	if settings.RedisAddr != "redis:6379" {
+		t.Fatalf("unexpected Redis address: %q", settings.RedisAddr)
+	}
+}
+
+func TestLoadRequiresRedisAddress(t *testing.T) {
+	setRequiredSettings(t)
+	t.Setenv("ANALYTICS_REDIS_ADDR", " ")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "ANALYTICS_REDIS_ADDR") {
+		t.Fatalf("Load error = %v", err)
 	}
 }
 

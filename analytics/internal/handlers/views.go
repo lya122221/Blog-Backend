@@ -22,7 +22,7 @@ const (
 )
 
 type ViewsService interface {
-	RecordViews(context.Context, models.ViewRequest, string) error
+	RecordViews(context.Context, models.ViewRequest, string) (int, error)
 }
 
 type ViewsHandler struct {
@@ -53,7 +53,8 @@ func (handler *ViewsHandler) Views(c *gin.Context) {
 	visitorID := handler.visitorID(c)
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
-	if err := handler.service.RecordViews(ctx, request, visitorID); err != nil {
+	accepted, err := handler.service.RecordViews(ctx, request, visitorID)
+	if err != nil {
 		var validationErr *services.ValidationError
 		if errors.As(err, &validationErr) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": validationErr.Error()})
@@ -64,7 +65,7 @@ func (handler *ViewsHandler) Views(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "events could not be accepted; retry with the same event IDs"})
 		return
 	}
-	c.JSON(http.StatusAccepted, gin.H{"accepted": len(request.Events)})
+	c.JSON(http.StatusAccepted, gin.H{"accepted": accepted})
 }
 
 func (handler *ViewsHandler) visitorID(c *gin.Context) string {

@@ -79,7 +79,16 @@ func run() error {
 		return fmt.Errorf("configure Kafka producer: %w", err)
 	}
 	defer eventProducer.Close()
-	viewService := services.NewViewsService(eventProducer)
+	viewLimiter, err := repositories.NewViewLimiter(signalCtx, settings.RedisAddr)
+	if err != nil {
+		return fmt.Errorf("connect to analytics Redis: %w", err)
+	}
+	defer func() {
+		if err := viewLimiter.Close(); err != nil {
+			appLogger.Error("close analytics Redis connection", "error", err)
+		}
+	}()
+	viewService := services.NewViewsService(eventProducer, viewLimiter)
 	viewHandler := handlers.NewViewsHandler(viewService, appLogger, settings.CookieSecure)
 
 	server := &http.Server{

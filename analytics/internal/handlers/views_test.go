@@ -22,14 +22,15 @@ type viewsServiceStub struct {
 	request   models.ViewRequest
 	visitorID string
 	calls     int
+	accepted  int
 	err       error
 }
 
-func (stub *viewsServiceStub) RecordViews(_ context.Context, request models.ViewRequest, visitorID string) error {
+func (stub *viewsServiceStub) RecordViews(_ context.Context, request models.ViewRequest, visitorID string) (int, error) {
 	stub.request = request
 	stub.visitorID = visitorID
 	stub.calls++
-	return stub.err
+	return stub.accepted, stub.err
 }
 
 func newTestHandler(stub *viewsServiceStub) *ViewsHandler {
@@ -84,6 +85,13 @@ func TestViewsReplacesInvalidCookie(t *testing.T) {
 	response := sendViews(newTestHandler(stub), validBody(), &http.Cookie{Name: cookieName, Value: "bad"})
 	if response.Code != http.StatusAccepted || len(response.Result().Cookies()) != 1 || stub.visitorID == "bad" {
 		t.Fatalf("response = %d, cookies = %+v", response.Code, response.Result().Cookies())
+	}
+}
+
+func TestViewsReportsAcceptedCount(t *testing.T) {
+	response := sendViews(newTestHandler(&viewsServiceStub{accepted: 1}), validBody(), nil)
+	if response.Code != http.StatusAccepted || !strings.Contains(response.Body.String(), `"accepted":1`) {
+		t.Fatalf("response = %d, body = %s", response.Code, response.Body.String())
 	}
 }
 

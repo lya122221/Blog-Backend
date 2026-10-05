@@ -40,6 +40,18 @@ services:
       timeout: 5s
       retries: 5
 
+  analytics_redis:
+    image: redis:7-alpine
+    restart: always
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - analytics_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   kafka:
     image: apache/kafka:4.1.2
     hostname: kafka
@@ -177,6 +189,7 @@ services:
       ANALYTICS_CLICKHOUSE_DATABASE: default
       ANALYTICS_CLICKHOUSE_USER: default
       ANALYTICS_CLICKHOUSE_PASSWORD: ""
+      ANALYTICS_REDIS_ADDR: analytics_redis:6379
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-json}
     depends_on:
@@ -184,6 +197,8 @@ services:
         condition: service_completed_successfully
       analytics_migrate:
         condition: service_completed_successfully
+      analytics_redis:
+        condition: service_healthy
 
   proxy:
     build: ./proxy
@@ -201,3 +216,4 @@ volumes:
   auth_postgres_data:
   kafka_data:
   clickhouse_data:
+  analytics_redis_data:

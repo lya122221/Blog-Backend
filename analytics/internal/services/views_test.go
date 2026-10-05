@@ -15,6 +15,30 @@ type producerStub struct {
 	err     error
 }
 
+type limiterStub struct {
+	keys map[string]string
+}
+
+func (stub *limiterStub) Acquire(_ context.Context, event models.Event) (bool, error) {
+	if stub.keys == nil {
+		stub.keys = make(map[string]string)
+	}
+	key := event.VisitorID + ":" + event.ArticleID + ":" + string(event.Type)
+	if _, exists := stub.keys[key]; exists {
+		return false, nil
+	}
+	stub.keys[key] = event.ID
+	return true, nil
+}
+
+func (stub *limiterStub) Release(_ context.Context, event models.Event) error {
+	key := event.VisitorID + ":" + event.ArticleID + ":" + string(event.Type)
+	if stub.keys[key] == event.ID {
+		delete(stub.keys, key)
+	}
+	return nil
+}
+
 func (stub *producerStub) Publish(_ context.Context, batch []models.Event) error {
 	stub.batches = append(stub.batches, batch)
 	return stub.err
@@ -23,7 +47,7 @@ func (stub *producerStub) Publish(_ context.Context, batch []models.Event) error
 var fixedNow = time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
 
 func newTestService(stub *producerStub) *ViewsService {
-	return &ViewsService{producer: stub, now: func() time.Time { return fixedNow }}
+	return &ViewsService{producer: stub, limiter: &limiterStub{}, now: func() time.Time { return fixedNow }}
 }
 
 func validView() models.ViewEvent {
@@ -41,7 +65,7 @@ func TestRecordViewsPublishesValidatedBatch(t *testing.T) {
 	impression.Type = models.ArticleImpression
 	visitorID := uuid.New().String()
 	request := models.ViewRequest{Events: []models.ViewEvent{opened, impression}}
-	if err := service.RecordViews(context.Background(), request, visitorID); err != nil {
+	if accepted, err := service.RecordViews(context.Background(), request, visitorID); err != nil || accepted != 2 {
 		t.Fatalf("RecordViews: %v", err)
 	}
 	if len(stub.batches) != 1 || len(stub.batches[0]) != 2 {
@@ -81,7 +105,7 @@ func TestRecordViewsRejectsInvalidBatchBeforePublishing(t *testing.T) {
 	for name, test := range cases {
 		t.Run(name, func(t *testing.T) {
 			stub := &producerStub{}
-			err := newTestService(stub).RecordViews(context.Background(), test.request, uuid.New().String())
+			_, err := newTestService(stub).RecordViews(context.Background(), test.request, uuid.New().String())
 			var validationErr *ValidationError
 			if !errors.As(err, &validationErr) || !strings.Contains(err.Error(), test.message) || len(stub.batches) != 0 {
 				t.Fatalf("error = %v, published batches = %d", err, len(stub.batches))
@@ -93,8 +117,71 @@ func TestRecordViewsRejectsInvalidBatchBeforePublishing(t *testing.T) {
 func TestRecordViewsPropagatesProducerFailure(t *testing.T) {
 	brokerErr := errors.New("broker unavailable")
 	stub := &producerStub{err: brokerErr}
-	err := newTestService(stub).RecordViews(context.Background(), models.ViewRequest{Events: []models.ViewEvent{validView()}}, uuid.New().String())
+	service := newTestService(stub)
+	_, err := service.RecordViews(context.Background(), models.ViewRequest{Events: []models.ViewEvent{validView()}}, uuid.New().String())
 	if !errors.Is(err, brokerErr) || len(stub.batches) != 1 {
 		t.Fatalf("error = %v, published batches = %d", err, len(stub.batches))
 	}
+	if len(service.limiter.(*limiterStub).keys) != 0 {
+		t.Fatal("view reservation was not released")
+	}
+}
+
+func TestRecordViewsSuppressesRepeatedViewsPerVisitorArticleAndType(t *testing.T) {
+	producer := &producerStub{}
+	service := newTestService(producer)
+	visitor := uuid.New().String()
+	opened := validView()
+	request := models.ViewRequest{Events: []models.ViewEvent{opened}}
+	if accepted, err := service.RecordViews(context.Background(), request, visitor); err != nil || accepted != 1 {
+		t.Fatalf("first view: accepted = %d, error = %v", accepted, err)
+	}
+	opened.ID = uuid.New().String()
+	request.Events[0] = opened
+	if accepted, err := service.RecordViews(context.Background(), request, visitor); err != nil || accepted != 0 {
+		t.Fatalf("repeated view: accepted = %d, error = %v", accepted, err)
+	}
+	if len(producer.batches) != 1 {
+		t.Fatalf("published batches = %d", len(producer.batches))
+	}
+	request.Events[0].Type = models.ArticleImpression
+	if accepted, err := service.RecordViews(context.Background(), request, visitor); err != nil || accepted != 1 {
+		t.Fatalf("other type: accepted = %d, error = %v", accepted, err)
+	}
+	request.Events[0].ID = uuid.New().String()
+	if accepted, err := service.RecordViews(context.Background(), request, uuid.New().String()); err != nil || accepted != 1 {
+		t.Fatalf("other visitor: accepted = %d, error = %v", accepted, err)
+	}
+	request.Events[0].ID = uuid.New().String()
+	request.Events[0].ArticleID = uuid.New().String()
+	if accepted, err := service.RecordViews(context.Background(), request, visitor); err != nil || accepted != 1 {
+		t.Fatalf("other article: accepted = %d, error = %v", accepted, err)
+	}
+}
+
+func TestRecordViewsReleasesReservationsOnLimiterFailure(t *testing.T) {
+	producer := &producerStub{}
+	service := newTestService(producer)
+	limiter := service.limiter.(*limiterStub)
+	first := validView()
+	second := validView()
+	service.limiter = &failingLimiter{limiterStub: limiter, failAt: 2}
+	_, err := service.RecordViews(context.Background(), models.ViewRequest{Events: []models.ViewEvent{first, second}}, uuid.New().String())
+	if err == nil || len(limiter.keys) != 0 || len(producer.batches) != 0 {
+		t.Fatalf("error = %v, keys = %d, published batches = %d", err, len(limiter.keys), len(producer.batches))
+	}
+}
+
+type failingLimiter struct {
+	*limiterStub
+	count  int
+	failAt int
+}
+
+func (stub *failingLimiter) Acquire(ctx context.Context, event models.Event) (bool, error) {
+	stub.count++
+	if stub.count == stub.failAt {
+		return false, errors.New("Redis unavailable")
+	}
+	return stub.limiterStub.Acquire(ctx, event)
 }
