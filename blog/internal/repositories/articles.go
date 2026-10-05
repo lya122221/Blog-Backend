@@ -159,6 +159,15 @@ func (s *Storage) CreateArticle(authorID, authorUsername, title, content string,
 			return err
 		}
 	}
+	if err := s.insertArticleEvent(context.Background(), tx, models.AnalyticsEvent{
+		Type:      models.ArticleCreated,
+		ArticleID: articleID,
+		AuthorID:  authorID,
+		Title:     title,
+		Tags:      tags,
+	}); err != nil {
+		return err
+	}
 
 	if err := tx.Commit(); err != nil {
 		return err
@@ -287,6 +296,7 @@ func (s *Storage) UpdateArticle(authorID string, articleID uuid.UUID, request mo
 		SELECT author_id
 		FROM articles
 		WHERE id = $1
+		FOR UPDATE
 	`, articleID).Scan(&storedAuthorID)
 	if err != nil {
 		return err
@@ -336,6 +346,15 @@ func (s *Storage) UpdateArticle(authorID string, articleID uuid.UUID, request mo
 			return err
 		}
 	}
+	if err := s.insertArticleEvent(context.Background(), tx, models.AnalyticsEvent{
+		Type:      models.ArticleUpdated,
+		ArticleID: articleID.String(),
+		AuthorID:  authorID,
+		Title:     request.Title,
+		Tags:      request.Tags,
+	}); err != nil {
+		return err
+	}
 
 	if err := tx.Commit(); err != nil {
 		return err
@@ -358,6 +377,7 @@ func (s *Storage) DeleteArticle(authorID string, articleID uuid.UUID) error {
 		SELECT author_id
 		FROM articles
 		WHERE id = $1
+		FOR UPDATE
 	`, articleID).Scan(&storedAuthorID)
 
 	if err != nil {
@@ -374,6 +394,13 @@ func (s *Storage) DeleteArticle(authorID string, articleID uuid.UUID) error {
 	`, articleID)
 
 	if err != nil {
+		return err
+	}
+	if err := s.insertArticleEvent(context.Background(), tx, models.AnalyticsEvent{
+		Type:      models.ArticleDeleted,
+		ArticleID: articleID.String(),
+		AuthorID:  authorID,
+	}); err != nil {
 		return err
 	}
 

@@ -1,3 +1,3 @@
-FROM caddy:2-alpine
+FROM nginx:stable-alpine
 
-COPY Caddyfile /etc/caddy/Caddyfile
+COPY nginx.conf /etc/nginx/conf.d/default.conf

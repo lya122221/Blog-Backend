@@ -1,0 +1,213 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"log/slog"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/gin-gonic/gin"
+)
+
+func init() { gin.SetMode(gin.TestMode) }
+
+func testLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
+}
+
+func testRoutes() analyticsRoutes {
+	return analyticsRoutes{
+		views: func(*gin.Context) {}, popular: func(*gin.Context) {},
+		auth: func(*gin.Context) {}, authorStats: func(*gin.Context) {}, articleStats: func(*gin.Context) {},
+	}
+}
+
+func TestRouterServesPublicPopularEndpoint(t *testing.T) {
+	router := newRouter(testLogger(), analyticsRoutes{
+		views: func(*gin.Context) {},
+		popular: func(c *gin.Context) {
+			c.Status(http.StatusNoContent)
+		},
+		auth: func(*gin.Context) {}, authorStats: func(*gin.Context) {}, articleStats: func(*gin.Context) {},
+	})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/analytics/popular?window=5m", nil))
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("popular response = %d", response.Code)
+	}
+}
+
+func TestRouterProtectsAuthorStats(t *testing.T) {
+	called := false
+	routes := testRoutes()
+	routes.auth = func(c *gin.Context) { c.AbortWithStatus(http.StatusUnauthorized) }
+	routes.authorStats = func(*gin.Context) { called = true }
+	routes.articleStats = func(*gin.Context) { called = true }
+	router := newRouter(testLogger(), routes)
+	for _, path := range []string{
+		"/api/v1/analytics/me/stats?period=7d",
+		"/api/v1/analytics/me/articles/article-1/stats?period=30d",
+	} {
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Code != http.StatusUnauthorized || called {
+			t.Fatalf("path %s: status = %d, handler called = %t", path, response.Code, called)
+		}
+	}
+}
+
+func TestRunRejectsInvalidConfiguration(t *testing.T) {
+	t.Setenv("ANALYTICS_JWT_PUBLIC_KEY", "public-key")
+	t.Setenv("ANALYTICS_KAFKA_BROKERS", "localhost:9092")
+	t.Setenv("ANALYTICS_KAFKA_TOPIC", "article-events")
+	t.Setenv("ANALYTICS_KAFKA_DLQ_TOPIC", "article-events.dlq")
+	t.Setenv("ANALYTICS_KAFKA_CONSUMER_GROUP", "analytics-events")
+	t.Setenv("ANALYTICS_KAFKA_BATCH_SIZE", "500")
+	t.Setenv("ANALYTICS_KAFKA_FLUSH_INTERVAL", "1s")
+	t.Setenv("ANALYTICS_RETRY_ATTEMPTS", "3")
+	t.Setenv("ANALYTICS_RETRY_BACKOFF", "100ms")
+	t.Setenv("ANALYTICS_REDIS_ADDR", "localhost:6379")
+	t.Setenv("ANALYTICS_CLICKHOUSE_ADDR", "localhost:9000")
+	t.Setenv("ANALYTICS_CLICKHOUSE_DATABASE", "default")
+	t.Setenv("ANALYTICS_CLICKHOUSE_USER", "default")
+	t.Setenv("ANALYTICS_PORT", "0")
+	if err := run(); err == nil || !strings.Contains(err.Error(), "configure analytics service") {
+		t.Fatalf("run error = %v", err)
+	}
+
+	t.Setenv("ANALYTICS_PORT", "8082")
+	t.Setenv("LOG_FORMAT", "xml")
+	if err := run(); err == nil || !strings.Contains(err.Error(), "configure logger") {
+		t.Fatalf("run error = %v", err)
+	}
+}
+
+type workerStub struct {
+	run func(context.Context) error
+}
+
+func (worker *workerStub) Run(ctx context.Context) error {
+	return worker.run(ctx)
+}
+
+func TestServeAnalyticsStopsOnConsumerFailure(t *testing.T) {
+	failure := errors.New("consumer failed")
+	listener := newListenerStub(nil)
+	worker := &workerStub{run: func(context.Context) error {
+		<-listener.accepted
+		return failure
+	}}
+	server := &http.Server{Handler: newRouter(testLogger(), testRoutes()), ReadHeaderTimeout: time.Second}
+	if err := serveAnalytics(context.Background(), server, listener, worker, testLogger()); !errors.Is(err, failure) {
+		t.Fatalf("serveAnalytics error = %v", err)
+	}
+}
+
+func TestServeAnalyticsStopsConsumerOnHTTPFailure(t *testing.T) {
+	failure := errors.New("listener failed")
+	listener := newListenerStub(failure)
+	worker := &workerStub{run: func(ctx context.Context) error {
+		<-ctx.Done()
+		return nil
+	}}
+	server := &http.Server{Handler: newRouter(testLogger(), testRoutes()), ReadHeaderTimeout: time.Second}
+	if err := serveAnalytics(context.Background(), server, listener, worker, testLogger()); !errors.Is(err, failure) {
+		t.Fatalf("serveAnalytics error = %v", err)
+	}
+}
+
+func TestServeAnalyticsStopsOnContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	listener := newListenerStub(nil)
+	worker := &workerStub{run: func(ctx context.Context) error {
+		<-ctx.Done()
+		return nil
+	}}
+	server := &http.Server{Handler: newRouter(testLogger(), testRoutes()), ReadHeaderTimeout: time.Second}
+	go func() {
+		<-listener.accepted
+		cancel()
+	}()
+	if err := serveAnalytics(ctx, server, listener, worker, testLogger()); err != nil {
+		t.Fatalf("serveAnalytics: %v", err)
+	}
+}
+
+func TestServeHTTPShutsDownGracefully(t *testing.T) {
+	listener := newListenerStub(nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server := &http.Server{Handler: newRouter(testLogger(), testRoutes()), ReadHeaderTimeout: time.Second}
+	done := make(chan error, 1)
+	go func() {
+		done <- serveHTTP(ctx, server, listener, testLogger())
+	}()
+
+	select {
+	case <-listener.accepted:
+	case <-time.After(time.Second):
+		t.Fatal("server did not start accepting connections")
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("serveHTTP: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("server did not stop")
+	}
+}
+
+func TestServeHTTPReportsListenerFailure(t *testing.T) {
+	serveErr := errors.New("listener failed")
+	listener := newListenerStub(serveErr)
+	server := &http.Server{Handler: newRouter(testLogger(), testRoutes()), ReadHeaderTimeout: time.Second}
+	err := serveHTTP(context.Background(), server, listener, testLogger())
+	if err == nil || !strings.Contains(err.Error(), "serve HTTP") || !errors.Is(err, serveErr) {
+		t.Fatalf("serveHTTP error = %v", err)
+	}
+}
+
+type listenerStub struct {
+	accepted  chan struct{}
+	closed    chan struct{}
+	acceptErr error
+	startOnce sync.Once
+	closeOnce sync.Once
+}
+
+func newListenerStub(acceptErr error) *listenerStub {
+	return &listenerStub{
+		accepted:  make(chan struct{}),
+		closed:    make(chan struct{}),
+		acceptErr: acceptErr,
+	}
+}
+
+func (listener *listenerStub) Accept() (net.Conn, error) {
+	listener.startOnce.Do(func() { close(listener.accepted) })
+	if listener.acceptErr != nil {
+		return nil, listener.acceptErr
+	}
+	<-listener.closed
+	return nil, net.ErrClosed
+}
+
+func (listener *listenerStub) Close() error {
+	listener.closeOnce.Do(func() { close(listener.closed) })
+	return nil
+}
+
+func (listener *listenerStub) Addr() net.Addr {
+	return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 8082}
+}

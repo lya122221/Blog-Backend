@@ -78,18 +78,18 @@ func TestShutdownHTTPServerCombinesErrors(t *testing.T) {
 func TestWaitForWorker(t *testing.T) {
 	done := make(chan error, 1)
 	done <- nil
-	if err := waitForWorker(done, time.Second); err != nil {
+	if err := waitForWorker("views updater", done, time.Second); err != nil {
 		t.Fatalf("waitForWorker: %v", err)
 	}
 
 	workerErr := errors.New("worker failed")
 	done = make(chan error, 1)
 	done <- workerErr
-	if err := waitForWorker(done, time.Second); !errors.Is(err, workerErr) {
+	if err := waitForWorker("outbox publisher", done, time.Second); !errors.Is(err, workerErr) {
 		t.Fatalf("worker error = %v", err)
 	}
 
-	if err := waitForWorker(make(chan error), time.Millisecond); err == nil {
+	if err := waitForWorker("outbox publisher", make(chan error), time.Millisecond); err == nil {
 		t.Fatal("expected worker timeout")
 	}
 }
