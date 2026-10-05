@@ -49,7 +49,7 @@ func TestArticleStatsIntegration(t *testing.T) {
 	}
 	defer func() { _ = repository.Close() }()
 
-	applyStatsMigration(t, ctx, repository, "000001_create_article_events_table.up.sql")
+	applyAnalyticsMigration(t, ctx, repository, "000001_create_article_events_table.up.sql")
 	articleID := uuid.New().String()
 	now := time.Now().UTC().Truncate(time.Second)
 	opened := models.ArticleEvent{Event: models.Event{
@@ -64,7 +64,7 @@ func TestArticleStatsIntegration(t *testing.T) {
 		"000003_create_article_stats_hour.up.sql",
 		"000004_create_article_stats_day.up.sql",
 	} {
-		applyStatsMigration(t, ctx, repository, migration)
+		applyAnalyticsMigration(t, ctx, repository, migration)
 	}
 
 	unliked := models.ArticleEvent{Event: models.Event{
@@ -134,7 +134,7 @@ func TestArticleStatsIntegration(t *testing.T) {
 	}
 }
 
-func applyStatsMigration(t *testing.T, ctx context.Context, repository *ClickHouse, name string) {
+func applyAnalyticsMigration(t *testing.T, ctx context.Context, repository *ClickHouse, name string) {
 	t.Helper()
 	data, err := os.ReadFile("../../migrations/" + name)
 	if err != nil {
