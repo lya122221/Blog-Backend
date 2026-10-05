@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -19,6 +20,24 @@ func init() { gin.SetMode(gin.TestMode) }
 
 func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
+}
+
+func testRoutes() analyticsRoutes {
+	return analyticsRoutes{views: func(*gin.Context) {}, popular: func(*gin.Context) {}}
+}
+
+func TestRouterServesPublicPopularEndpoint(t *testing.T) {
+	router := newRouter(testLogger(), analyticsRoutes{
+		views: func(*gin.Context) {},
+		popular: func(c *gin.Context) {
+			c.Status(http.StatusNoContent)
+		},
+	})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/analytics/popular?window=5m", nil))
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("popular response = %d", response.Code)
+	}
 }
 
 func TestRunRejectsInvalidConfiguration(t *testing.T) {
@@ -61,7 +80,7 @@ func TestServeAnalyticsStopsOnConsumerFailure(t *testing.T) {
 		<-listener.accepted
 		return failure
 	}}
-	server := &http.Server{Handler: newRouter(testLogger(), func(*gin.Context) {}), ReadHeaderTimeout: time.Second}
+	server := &http.Server{Handler: newRouter(testLogger(), testRoutes()), ReadHeaderTimeout: time.Second}
 	if err := serveAnalytics(context.Background(), server, listener, worker, testLogger()); !errors.Is(err, failure) {
 		t.Fatalf("serveAnalytics error = %v", err)
 	}
@@ -74,7 +93,7 @@ func TestServeAnalyticsStopsConsumerOnHTTPFailure(t *testing.T) {
 		<-ctx.Done()
 		return nil
 	}}
-	server := &http.Server{Handler: newRouter(testLogger(), func(*gin.Context) {}), ReadHeaderTimeout: time.Second}
+	server := &http.Server{Handler: newRouter(testLogger(), testRoutes()), ReadHeaderTimeout: time.Second}
 	if err := serveAnalytics(context.Background(), server, listener, worker, testLogger()); !errors.Is(err, failure) {
 		t.Fatalf("serveAnalytics error = %v", err)
 	}
@@ -88,7 +107,7 @@ func TestServeAnalyticsStopsOnContextCancellation(t *testing.T) {
 		<-ctx.Done()
 		return nil
 	}}
-	server := &http.Server{Handler: newRouter(testLogger(), func(*gin.Context) {}), ReadHeaderTimeout: time.Second}
+	server := &http.Server{Handler: newRouter(testLogger(), testRoutes()), ReadHeaderTimeout: time.Second}
 	go func() {
 		<-listener.accepted
 		cancel()
@@ -102,7 +121,7 @@ func TestServeHTTPShutsDownGracefully(t *testing.T) {
 	listener := newListenerStub(nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	server := &http.Server{Handler: newRouter(testLogger(), func(*gin.Context) {}), ReadHeaderTimeout: time.Second}
+	server := &http.Server{Handler: newRouter(testLogger(), testRoutes()), ReadHeaderTimeout: time.Second}
 	done := make(chan error, 1)
 	go func() {
 		done <- serveHTTP(ctx, server, listener, testLogger())
@@ -128,7 +147,7 @@ func TestServeHTTPShutsDownGracefully(t *testing.T) {
 func TestServeHTTPReportsListenerFailure(t *testing.T) {
 	serveErr := errors.New("listener failed")
 	listener := newListenerStub(serveErr)
-	server := &http.Server{Handler: newRouter(testLogger(), func(*gin.Context) {}), ReadHeaderTimeout: time.Second}
+	server := &http.Server{Handler: newRouter(testLogger(), testRoutes()), ReadHeaderTimeout: time.Second}
 	err := serveHTTP(context.Background(), server, listener, testLogger())
 	if err == nil || !strings.Contains(err.Error(), "serve HTTP") || !errors.Is(err, serveErr) {
 		t.Fatalf("serveHTTP error = %v", err)

@@ -90,10 +90,12 @@ func run() error {
 	}()
 	viewService := services.NewViewsService(eventProducer, viewLimiter)
 	viewHandler := handlers.NewViewsHandler(viewService, appLogger, settings.CookieSecure)
+	popularService := services.NewPopularService(storage)
+	popularHandler := handlers.NewPopularHandler(popularService, appLogger)
 
 	server := &http.Server{
 		Addr:              settings.Address(),
-		Handler:           newRouter(appLogger, viewHandler.Views),
+		Handler:           newRouter(appLogger, analyticsRoutes{views: viewHandler.Views, popular: popularHandler.Popular}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	listener, err := net.Listen("tcp", server.Addr)
@@ -129,10 +131,16 @@ func serveAnalytics(ctx context.Context, server *http.Server, listener net.Liste
 	}
 }
 
-func newRouter(appLogger *slog.Logger, handleViews gin.HandlerFunc) *gin.Engine {
+type analyticsRoutes struct {
+	views   gin.HandlerFunc
+	popular gin.HandlerFunc
+}
+
+func newRouter(appLogger *slog.Logger, routes analyticsRoutes) *gin.Engine {
 	router := gin.New()
 	router.Use(middleware.RequestLogger(appLogger), middleware.Recovery(appLogger))
-	router.POST("/api/v1/analytics/views", handleViews)
+	router.POST("/api/v1/analytics/views", routes.views)
+	router.GET("/api/v1/analytics/popular", routes.popular)
 	return router
 }
 
