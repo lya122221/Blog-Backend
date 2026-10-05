@@ -132,6 +132,8 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_HOST: db
       REDIS_HOST: redis
+      BLOG_KAFKA_BROKERS: kafka:19092
+      BLOG_KAFKA_TOPIC: ${ANALYTICS_KAFKA_TOPIC:-article-events}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-json}
     depends_on:
@@ -140,6 +142,8 @@ services:
       redis:
         condition: service_healthy
       migrate:
+        condition: service_completed_successfully
+      kafka_init:
         condition: service_completed_successfully
 
   auth:
