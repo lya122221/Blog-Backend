@@ -21,6 +21,7 @@ type Config struct {
 	RetryAttempts int
 	RetryBackoff  time.Duration
 	CookieSecure  bool
+	JWTPublicKey  string
 	RedisAddr     string
 	ClickHouse    ClickHouseConfig
 }
@@ -86,6 +87,10 @@ func Load() (Config, error) {
 	config.RedisAddr = strings.TrimSpace(os.Getenv("ANALYTICS_REDIS_ADDR"))
 	if config.RedisAddr == "" {
 		return Config{}, fmt.Errorf("missing ANALYTICS_REDIS_ADDR")
+	}
+	config.JWTPublicKey = strings.TrimSpace(os.Getenv("ANALYTICS_JWT_PUBLIC_KEY"))
+	if config.JWTPublicKey == "" {
+		return Config{}, fmt.Errorf("missing ANALYTICS_JWT_PUBLIC_KEY")
 	}
 	if value := os.Getenv("ANALYTICS_COOKIE_SECURE"); value != "" {
 		cookieSecure, err := strconv.ParseBool(value)

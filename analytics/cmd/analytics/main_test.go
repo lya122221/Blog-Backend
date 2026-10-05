@@ -23,7 +23,10 @@ func testLogger() *slog.Logger {
 }
 
 func testRoutes() analyticsRoutes {
-	return analyticsRoutes{views: func(*gin.Context) {}, popular: func(*gin.Context) {}}
+	return analyticsRoutes{
+		views: func(*gin.Context) {}, popular: func(*gin.Context) {},
+		auth: func(*gin.Context) {}, authorStats: func(*gin.Context) {}, articleStats: func(*gin.Context) {},
+	}
 }
 
 func TestRouterServesPublicPopularEndpoint(t *testing.T) {
@@ -32,6 +35,7 @@ func TestRouterServesPublicPopularEndpoint(t *testing.T) {
 		popular: func(c *gin.Context) {
 			c.Status(http.StatusNoContent)
 		},
+		auth: func(*gin.Context) {}, authorStats: func(*gin.Context) {}, articleStats: func(*gin.Context) {},
 	})
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/analytics/popular?window=5m", nil))
@@ -40,7 +44,27 @@ func TestRouterServesPublicPopularEndpoint(t *testing.T) {
 	}
 }
 
+func TestRouterProtectsAuthorStats(t *testing.T) {
+	called := false
+	routes := testRoutes()
+	routes.auth = func(c *gin.Context) { c.AbortWithStatus(http.StatusUnauthorized) }
+	routes.authorStats = func(*gin.Context) { called = true }
+	routes.articleStats = func(*gin.Context) { called = true }
+	router := newRouter(testLogger(), routes)
+	for _, path := range []string{
+		"/api/v1/analytics/me/stats?period=7d",
+		"/api/v1/analytics/me/articles/article-1/stats?period=30d",
+	} {
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Code != http.StatusUnauthorized || called {
+			t.Fatalf("path %s: status = %d, handler called = %t", path, response.Code, called)
+		}
+	}
+}
+
 func TestRunRejectsInvalidConfiguration(t *testing.T) {
+	t.Setenv("ANALYTICS_JWT_PUBLIC_KEY", "public-key")
 	t.Setenv("ANALYTICS_KAFKA_BROKERS", "localhost:9092")
 	t.Setenv("ANALYTICS_KAFKA_TOPIC", "article-events")
 	t.Setenv("ANALYTICS_KAFKA_DLQ_TOPIC", "article-events.dlq")

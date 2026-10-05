@@ -9,6 +9,7 @@ import (
 func setRequiredSettings(t *testing.T) {
 	t.Helper()
 	t.Setenv("ANALYTICS_PORT", "8082")
+	t.Setenv("ANALYTICS_JWT_PUBLIC_KEY", "public-key")
 	t.Setenv("ANALYTICS_KAFKA_BROKERS", "localhost:9092")
 	t.Setenv("ANALYTICS_KAFKA_TOPIC", "article-events")
 	t.Setenv("ANALYTICS_KAFKA_DLQ_TOPIC", "article-events.dlq")
@@ -89,6 +90,14 @@ func TestLoadRequiresRedisAddress(t *testing.T) {
 	setRequiredSettings(t)
 	t.Setenv("ANALYTICS_REDIS_ADDR", " ")
 	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "ANALYTICS_REDIS_ADDR") {
+		t.Fatalf("Load error = %v", err)
+	}
+}
+
+func TestLoadRequiresJWTPublicKey(t *testing.T) {
+	setRequiredSettings(t)
+	t.Setenv("ANALYTICS_JWT_PUBLIC_KEY", " ")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "ANALYTICS_JWT_PUBLIC_KEY") {
 		t.Fatalf("Load error = %v", err)
 	}
 }

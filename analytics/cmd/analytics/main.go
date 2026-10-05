@@ -47,6 +47,10 @@ func run() error {
 		return fmt.Errorf("configure logger: %w", err)
 	}
 	slog.SetDefault(appLogger)
+	authMiddleware, err := middleware.AuthMiddleware(settings.JWTPublicKey)
+	if err != nil {
+		return fmt.Errorf("configure JWT verification: %w", err)
+	}
 	signalCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
 
@@ -92,10 +96,15 @@ func run() error {
 	viewHandler := handlers.NewViewsHandler(viewService, appLogger, settings.CookieSecure)
 	popularService := services.NewPopularService(storage)
 	popularHandler := handlers.NewPopularHandler(popularService, appLogger)
+	authorStatsService := services.NewAuthorStatsService(storage)
+	authorStatsHandler := handlers.NewAuthorStatsHandler(authorStatsService, appLogger)
 
 	server := &http.Server{
-		Addr:              settings.Address(),
-		Handler:           newRouter(appLogger, analyticsRoutes{views: viewHandler.Views, popular: popularHandler.Popular}),
+		Addr: settings.Address(),
+		Handler: newRouter(appLogger, analyticsRoutes{
+			views: viewHandler.Views, popular: popularHandler.Popular, auth: authMiddleware,
+			authorStats: authorStatsHandler.AuthorStats, articleStats: authorStatsHandler.ArticleStats,
+		}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	listener, err := net.Listen("tcp", server.Addr)
@@ -132,8 +141,11 @@ func serveAnalytics(ctx context.Context, server *http.Server, listener net.Liste
 }
 
 type analyticsRoutes struct {
-	views   gin.HandlerFunc
-	popular gin.HandlerFunc
+	views        gin.HandlerFunc
+	popular      gin.HandlerFunc
+	auth         gin.HandlerFunc
+	authorStats  gin.HandlerFunc
+	articleStats gin.HandlerFunc
 }
 
 func newRouter(appLogger *slog.Logger, routes analyticsRoutes) *gin.Engine {
@@ -141,6 +153,8 @@ func newRouter(appLogger *slog.Logger, routes analyticsRoutes) *gin.Engine {
 	router.Use(middleware.RequestLogger(appLogger), middleware.Recovery(appLogger))
 	router.POST("/api/v1/analytics/views", routes.views)
 	router.GET("/api/v1/analytics/popular", routes.popular)
+	router.GET("/api/v1/analytics/me/stats", routes.auth, routes.authorStats)
+	router.GET("/api/v1/analytics/me/articles/:id/stats", routes.auth, routes.articleStats)
 	return router
 }
 
